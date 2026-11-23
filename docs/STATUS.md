@@ -3663,3 +3663,18 @@ Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, Xvfb + lavapipe):
 - Full `VICTUS_REQUIRE_GPU=1 ctest -j2 -E perf_budgets`: 47/47 passed; `perf_budgets` alone: passed.
 - Next task: procedural city materials (windows, facade variation) and foliage.
 
+
+## 2026-11-23 — Procedural city facades, glass and trees; SSR fallback (ADR-0241)
+
+Built:
+- `procgen::build_city_meshes`: per-building wall and roof tint, darker street-level walls, window bands split by piers (masonry) or frame mullions (glass towers), shop units with awnings on masonry ground floors, cornices under every tier top, one to three rooftop units, and trees with a taller trunk and two or three smooth leaf clumps. Window panes are a new `CityLayer::Glass` drawn at roughness 0.14.
+- `pbr.frag` `ssr_trace`: a ray with no proper hit reflects the first surface it stepped behind, at 85 % confidence. Regenerated the built-in shader library.
+- Test: `gpu opaque ssr: glossy walls reflect facades seen at a grazing angle (ADR-0241)`.
+
+Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, Xvfb + lavapipe):
+- `victus_procgen_tests -tc="*city*"`: 5 cases, 1900 assertions passed (all faces outward, none degenerate, cell split keeps the triangle count). 6x6 city 126,374 triangles; 12x12 city 562,228 triangles (208,424 before), meshes built in 30.2 ms (16.8 ms before).
+- `victus_gpu_tests -tc="*procedural city*"`: passed; 807 distinct colours in the aerial view and 638 at street level (threshold 150). Renders at 1280x720 reviewed: separate windows with piers, shopfronts and awnings, cornices, varied building colours, soft round trees, street reflected in shop glass.
+- Grazing-angle SSR test: mean difference between horizontal neighbours on the mirror wall 0.96 levels with the fallback, 12.3 with it disabled (mutation check, the test fails); 1653 green reflected pixels against 0 without SSR. The other opaque SSR, water SSR and reflection probe tests pass.
+- Reference scene goldens regenerated for the SSR change (reviewed side by side): interior FLIP mean 0.0096, worst tile 0.070 (the glossy floor now mirrors the red wall where it reflected the sky); exterior 0.0013, effects 0.0007, photoreal 0.0007 (mirror-sphere reflections only). `reference_scenes`, `render_compare` and `cli_smoke` pass against them.
+- Full `VICTUS_REQUIRE_GPU=1 ctest -j2 -E perf_budgets`: 46/47 passed before the golden update (only `reference_scenes`); `perf_budgets` alone passed (frame p95 224 ms against the 400 ms ceiling).
+- Next task: Studio New Scene keeps the template's HDR-calibrated sun without the HDR sky, exposure and fog (ADR-0237 regression); then foliage wind.

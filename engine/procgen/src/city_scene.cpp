@@ -21,7 +21,7 @@ using scene::Entity;
 
 namespace {
 
-constexpr const char* kLayerNames[kCityLayerCount] = {"Ground", "Buildings", "Props", "Foliage"};
+constexpr const char* kLayerNames[kCityLayerCount] = {"Ground", "Buildings", "Props", "Foliage", "Glass"};
 
 CityWorld& city_world(scene::Scene& scene) {
     auto& w = scene.world();
@@ -172,7 +172,12 @@ bool build_city(scene::Scene& scene) {
         const auto layer = static_cast<std::uint32_t>(m.layer);
         const Entity e = transient_child(scene, root, std::format("{} {},{}", kLayerNames[layer], m.cell.x, m.cell.y));
         auto& mr = w.add<scene::MeshRendererComponent>(e);
-        mr.roughness = m.layer == CityLayer::Buildings ? 0.55f : m.layer == CityLayer::Props ? 0.45f : 0.9f;
+        switch (m.layer) {
+        case CityLayer::Buildings: mr.roughness = 0.7f; break;
+        case CityLayer::Props: mr.roughness = 0.45f; break;
+        case CityLayer::Glass: mr.roughness = 0.14f; break; // reflects the sky and the street
+        default: mr.roughness = 0.9f; break;
+        }
         mr.cast_shadows = m.layer != CityLayer::Ground;
         w.add<scene::ProceduralMeshComponent>(e).mesh = std::move(*mesh);
         ++st.meshes;

@@ -155,3 +155,81 @@ TEST_CASE("gpu opaque ssr: the Medium tier (no TAA) does not trace") {
     ctx.device().destroy(target);
     ctx.destroy(cube);
 }
+
+TEST_CASE("gpu opaque ssr: glossy walls reflect facades seen at a grazing angle (ADR-0241)") {
+    // A street: a glossy black wall on the left mirrors a glowing facade on the right that runs
+    // away from the camera. Its depth changes quickly from pixel to pixel, so many reflected rays
+    // land far behind the stored surface; they reflect the first such surface instead of nothing.
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto& dev = ctx.device();
+    if (dev.capabilities().backend == rhi::Backend::GLES) return; // no opaque SSR on GLES
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    SceneRenderer& r = *sr.value();
+    auto cube = ctx.create_mesh(make_cube(), "ssr_cube").value();
+    Material mirror;
+    mirror.base_color = {0.9f, 0.9f, 0.9f, 1};
+    mirror.metallic = 1.0f;
+    mirror.roughness = 0.05f;
+    Material green;
+    green.base_color = {0, 0, 0, 1};
+    green.emissive = {0.1f, 1.0f, 0.1f, 1};
+    green.emissive_strength = 3.0f;
+    Material ground;
+    ground.base_color = {0.05f, 0.05f, 0.05f, 1};
+    ground.roughness = 1.0f;
+    const math::Mat4 left = math::Mat4::trs({-4.0f, 4, -40}, {}, {0.4f, 8, 80});
+    const math::Mat4 right = math::Mat4::trs({4.0f, 4, -40}, {}, {0.4f, 8, 80});
+    const math::Mat4 floor_m = math::Mat4::trs({0, -0.5f, -40}, {}, {20, 1, 80});
+    const Camera3D cam = Camera3D::look_at({0, 1.6f, 2}, {0, 1.6f, -20});
+    const auto render = [&](RenderSettings s, const char* save) {
+        r.set_settings(s);
+        r.reset_history();
+        auto target = test::make_target(W, H);
+        for (int i = 0; i < 16; ++i) {
+            DirectionalLight sun;
+            sun.direction = {0.3f, -1, -0.2f};
+            sun.intensity = 0.2f;
+            sun.shadows = false;
+            r.begin(cam, sun, dark_env());
+            r.submit(cube, mirror, left);
+            r.submit(cube, green, right);
+            r.submit(cube, ground, floor_m);
+            auto cmd = dev.begin_commands();
+            REQUIRE(r.render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+            cmd.submit_and_wait();
+        }
+        auto px = dev.read_texture(target).value();
+        test::save_output(save, W, H, px);
+        dev.destroy(target);
+        return px;
+    };
+    RenderSettings on = RenderSettings::preset(QualityTier::High);
+    on.bloom = false;
+    on.ssao = false;
+    on.taa = true;
+    on.screen_space_reflections = true;
+    RenderSettings off = on;
+    off.ssr_max_roughness = 0.0f;
+    const auto with = render(on, "opaque_ssr_grazing"), without = render(off, "opaque_ssr_grazing_off");
+    // Left third of the image: the mirror wall. Count green pixels and the mean absolute
+    // difference between horizontal neighbours there (dither from rays flipping hit / miss).
+    int green_on = 0, green_off = 0;
+    double grain = 0;
+    int pairs = 0;
+    for (std::uint32_t y = H / 4; y < H * 3 / 4; ++y)
+        for (std::uint32_t x = 2; x < W / 3; ++x) {
+            const std::uint32_t c = test::pixel(with, W, x, y), o = test::pixel(without, W, x, y);
+            if (channel(c, 1) > 60 && channel(c, 1) > channel(c, 0) + 30) ++green_on;
+            if (channel(o, 1) > 60 && channel(o, 1) > channel(o, 0) + 30) ++green_off;
+            const std::uint32_t p = test::pixel(with, W, x - 1, y);
+            grain += std::abs(static_cast<int>(channel(c, 1)) - static_cast<int>(channel(p, 1)));
+            ++pairs;
+        }
+    grain /= pairs;
+    MESSAGE("mirror wall: green pixels with SSR " << green_on << ", without " << green_off << "; neighbour difference " << grain);
+    CHECK(green_on > green_off + 200);
+    CHECK(grain < 5.0); // 12.3 without the fallback, 0.96 with it (lavapipe)
+    ctx.destroy(cube);
+}

@@ -110,8 +110,9 @@ struct City {
 
 // ---- meshes ---------------------------------------------------------------------------------
 
-enum class CityLayer : std::uint8_t { Ground, Buildings, Props, Foliage };
-inline constexpr std::uint32_t kCityLayerCount = 4;
+// Glass holds the window panes so they can be drawn glossy (sky reflections) apart from walls.
+enum class CityLayer : std::uint8_t { Ground, Buildings, Props, Foliage, Glass };
+inline constexpr std::uint32_t kCityLayerCount = 5;
 
 struct CityMesh {
     CityLayer layer{CityLayer::Ground};
@@ -120,7 +121,8 @@ struct CityMesh {
 };
 
 // Merges the city into one mesh per (cell, layer): asphalt with lane markings and crossings,
-// kerb plates, parks, building tiers with floor bands and roofs, light poles and trees. Cells are
+// kerb plates, parks, building tiers with windows, piers, cornices, shopfronts and roofs, glass
+// panes (their own layer), light poles and trees with soft leaf clumps. Cells are
 // `cell_size` metres square (<= 0: one cell). Empty meshes are omitted.
 [[nodiscard]] std::vector<CityMesh> build_city_meshes(const City& city, float cell_size = 200.0f);
 

@@ -379,7 +379,7 @@ vec4 ssr_trace(vec3 p, vec3 r, vec3 n, float roughness) {
     vec2 q = gl_FragCoord.xy + 5.588238 * lighting.ssr_frame.x;
     float jitter = fract(52.9829189 * fract(dot(q, vec2(0.06711056, 0.00583715))));
     vec3 origin = p + n * 0.02;
-    float t_prev = 0.0, t_hit = -1.0;
+    float t_prev = 0.0, t_hit = -1.0, t_occluded = -1.0;
     for (int i = 0; i < steps; ++i) {
         float s = (float(i) + jitter) / float(steps);
         float t = max(s * s * sp.y, 0.05);
@@ -401,10 +401,19 @@ vec4 ssr_trace(vec3 p, vec3 r, vec3 n, float roughness) {
             t_hit = hi;
             break;
         }
-        // A step that jumps far behind a surface passed under an object: keep marching.
+        // A step that jumps far behind a surface passed under an object: keep marching, but
+        // remember the first such surface. Rays that never find a closer hit reflect it at reduced
+        // confidence rather than the sky, which otherwise flips neighbouring pixels between the two
+        // and leaves a dither TAA cannot resolve (ADR-0241).
+        if (behind > 0.0 && t_occluded < 0.0) t_occluded = t;
         t_prev = t;
     }
-    if (t_hit < 0.0) return vec4(0.0);
+    float fallback = 1.0;
+    if (t_hit < 0.0) {
+        if (t_occluded < 0.0) return vec4(0.0);
+        t_hit = t_occluded;
+        fallback = 0.85;
+    }
     vec4 c = lighting.ssr_prev_vp * vec4(origin + r * t_hit, 1.0);
     vec2 uv = vec2(c.x / c.w * 0.5 + 0.5, 0.5 - c.y / c.w * 0.5);
     vec2 edge = min(uv, 1.0 - uv);
@@ -412,7 +421,7 @@ vec4 ssr_trace(vec3 p, vec3 r, vec3 n, float roughness) {
     conf *= clamp((1.0 - t_hit / sp.y) / 0.25, 0.0, 1.0);
     conf *= 1.0 - smoothstep(sp.w * 0.6, sp.w, roughness);
     vec3 hit = min(textureLod(u_ssr_color, uv, 0.0).rgb * lighting.ssr_frame.y, vec3(64.0));
-    return vec4(hit, conf);
+    return vec4(hit, conf * fallback);
 }
 #endif
 // Karis' analytic approximation of the split-sum environment BRDF (mobile). FP32 in every variant:
