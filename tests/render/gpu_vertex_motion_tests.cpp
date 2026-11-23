@@ -204,3 +204,52 @@ TEST_CASE("gpu vertex functions: animated vertices get object motion vectors und
     sh.destroy(dev);
     ctx.destroy(bar);
 }
+
+TEST_CASE("gpu vertex functions: max_vertex_offset keeps displaced geometry from being culled (ADR-0245)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto& dev = ctx.device();
+    auto bar = ctx.create_mesh(make_cube({0.3f, 0.8f, 0.3f}), "vx_bounds_bar").value();
+    // vertex() carries the bar params[0].x metres along +x: submitted 9 m left of the view, it
+    // is drawn in the middle of the frame, outside its mesh bounds.
+    Shaders sh = compile("void surface(SurfaceInput i, inout Surface s) {\n    s.base_color = vec3(1.0);\n}\n"
+                         "void vertex(VertexInput i, inout Vertex v) {\n    v.world_position.x += i.params[0].x;\n}\n");
+    Material m;
+    m.unlit = true;
+    m.surface_shader = sh.fragment;
+    m.vertex_stage = &sh.stage;
+    m.shader_params[0] = {9.0f, 0, 0, 0};
+    const auto centre_white = [](const Frame& f) { return channel(pixel(f.px, W, W / 2, H / 2), 0) > 200; };
+    const math::Mat4 model = math::Mat4::translation({-9.0f, 0, 0});
+    auto r = SceneRenderer::create(ctx).value();
+    r->set_settings(settings(false, false));
+    // Mesh bounds only: the frustum test drops it.
+    Frame f = render_frame(*r, 0.0, [&](SceneRenderer& s) { s.submit(bar, m, model); });
+    CHECK(f.stats.culled == 1);
+    CHECK_FALSE(centre_white(f));
+    // Bounds grown by the declared offset: drawn where the function puts it.
+    m.max_vertex_offset = 9.5f;
+    f = render_frame(*r, 0.0, [&](SceneRenderer& s) { s.submit(bar, m, model); }, "vertex_offset_bounds");
+    CHECK(f.stats.culled == 0);
+    CHECK(f.stats.visible == 1);
+    CHECK(centre_white(f));
+    // The same through a retained instance group (cluster bounds are grown when the group is built).
+    const math::Mat4 models[1] = {model};
+    SceneRenderer::InstanceGroupDesc desc;
+    desc.mesh = &bar;
+    desc.material = m;
+    desc.models = models;
+    const std::uint32_t group = r->create_instance_group(desc).value();
+    f = render_frame(*r, 0.0, [&](SceneRenderer& s) { (void)s.submit_instance_group(group); });
+    CHECK(centre_white(f));
+    r->destroy_instance_group(group);
+    // Without a vertex stage the offset is ignored (nothing moves, so nothing to keep).
+    Material plain;
+    plain.unlit = true;
+    plain.max_vertex_offset = 9.5f;
+    f = render_frame(*r, 0.0, [&](SceneRenderer& s) { s.submit(bar, plain, model); });
+    CHECK(f.stats.culled == 1);
+    r.reset();
+    sh.destroy(dev);
+    ctx.destroy(bar);
+}

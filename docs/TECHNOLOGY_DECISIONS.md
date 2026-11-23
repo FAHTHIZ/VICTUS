@@ -2723,4 +2723,28 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 - Swaying foliage and other animated vertex functions reproject under TAA and get SSAO from the prepass depth.
 - Each vertex-function shader compiles eight vertex variants instead of five. Motion draws run the function twice per vertex.
 - Motion is exact only for functions of the clock, transform and vertex. A function whose output changes for another reason between frames, such as a texture or parameter edited at runtime, reprojects as if that input had not changed.
-- Culling bounds are still not grown by the offset (ADR-0170); that is the remaining GAP-17 vertex item.
+- Culling bounds are still not grown by the offset (ADR-0170); ADR-0245 adds a per-material bound.
+
+### ADR-0245: Culling-bounds growth for vertex functions (GAP-17, slice 4)
+
+**Status:** Accepted (2026-11-24).
+
+**Context:** Frustum, shadow-caster, local-light and GPU occlusion culling test a draw's mesh bounds. A `vertex()` function (ADR-0170) can move geometry outside those bounds, so wind-bent tree tops, waves or a flag displaced past its mesh popped out when the mesh bounds left the view or a shadow cascade. The renderer cannot derive the reach of arbitrary shader code. Unreal asks the material for it: "Max World Position Offset Displacement" grows the primitive bounds. Unity lets scripts override renderer bounds (`Renderer.localBounds`).
+
+**Decision:**
+- `MaterialAsset::max_vertex_offset` is the metres a material's vertex function may move a vertex, stored as `.vmat` key `"max_vertex_offset"`. It is clamped to 0..100, omitted at 0, inherited and overridable by instances (`MaterialField::MaxVertexOffset`), and shown in the Material Editor's Shader section as "Max Vertex Offset".
+- `render::Material::max_vertex_offset` carries it to the renderer and is part of the material signature (now 72 words).
+- `Draw::culling_bounds()` returns the mesh bounds times the model, or the skinned world bounds, grown by the offset on every side when the material has a vertex stage. Without a vertex stage the offset is ignored. It replaces the three per-draw bound computations: visibility and LOD classification, local-light caster lists, and GPU occlusion bounds. Retained instance groups (ADR-0162) grow each copy's box when the group is built, so cluster bounds include the reach.
+- The starter leaves and bark materials (ADR-0243) declare 0.5 m: about 0.35 m of bend at a 10 m crown top with full gusts, plus flutter.
+
+**Alternatives:**
+- Grow bounds per shader (a `// bounds` directive in the `.vshader`): reach depends on the material's parameters (wind strength), so the material is the right owner.
+- Disable culling for vertex-function draws: correct but draws every swaying tree in the world into every cascade.
+- Measure the reach by running the function on the CPU: needs a GLSL interpreter and is still only a sample of `time`.
+
+**Evidence:** `victus_gpu_tests -tc="gpu vertex functions: max_vertex_offset*"` and `victus_asset_tests -tc="material max vertex offset*"`; STATUS.md entry for the commit.
+
+**Consequences:**
+- Displaced geometry stays drawn, and keeps casting shadows, while any part of it can be on screen. This holds as long as the material declares an offset at least as large as the function's reach. Too small a value still pops; too large costs culling efficiency.
+- LOD selection uses the grown bounds too, so a large offset selects slightly finer LODs.
+- Existing materials keep 0 and behave as before.

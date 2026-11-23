@@ -102,7 +102,7 @@ std::uint64_t mix(std::uint64_t h, std::uint64_t v) noexcept {
 // Every Material field as 32-bit words (floats by bit pattern), in a fixed layout: equal
 // signatures mean identical materials, and the hash covers all of it (ADR-0229).
 // A new Material field changes its size: add it to pack_material and same_material, then here.
-static_assert(sizeof(void*) != 8 || sizeof(Material) == 304, "pack_material and same_material must cover every Material field");
+static_assert(sizeof(void*) != 8 || sizeof(Material) == 312, "pack_material and same_material must cover every Material field");
 void pack_material(const Material& m, SceneRenderer::MaterialSignature& sig) noexcept {
     std::uint32_t* w = sig.words.data();
     std::size_t n = 0;
@@ -117,7 +117,8 @@ void pack_material(const Material& m, SceneRenderer::MaterialSignature& sig) noe
     f(m.uv_scale.x), f(m.uv_scale.y), f(m.uv_offset.x), f(m.uv_offset.y), f(m.coverage_response);
     f(m.occlusion_strength), f(m.triplanar_sharpness), f(m.clearcoat), f(m.clearcoat_roughness), f(m.responsive);
     f(m.sheen_color.x), f(m.sheen_color.y), f(m.sheen_color.z), f(m.sheen_roughness), f(m.anisotropy), f(m.anisotropy_rotation);
-    f(m.subsurface_color.x), f(m.subsurface_color.y), f(m.subsurface_color.z), f(m.subsurface_thickness), f(m.anti_tiling);
+    f(m.subsurface_color.x), f(m.subsurface_color.y), f(m.subsurface_color.z), f(m.subsurface_thickness), f(m.anti_tiling),
+        f(m.max_vertex_offset);
     t(m.base_color_texture), t(m.metallic_roughness_texture), t(m.normal_texture), t(m.emissive_texture);
     w[n++] = (m.double_sided ? 1u : 0u) | (m.unlit ? 2u : 0u) | (m.cast_shadows ? 4u : 0u) | (m.nearest_filter ? 8u : 0u) |
              (m.vertex_alpha_coverage_mask ? 16u : 0u) | (m.shadow_only ? 32u : 0u) | (m.triplanar ? 64u : 0u) |
@@ -175,7 +176,17 @@ bool same_material(const Material& a, const Material& b) noexcept {
            a.triplanar == b.triplanar && a.triplanar_sharpness == b.triplanar_sharpness && a.clearcoat == b.clearcoat &&
            a.clearcoat_roughness == b.clearcoat_roughness && a.responsive == b.responsive && a.sheen_color == b.sheen_color &&
            a.sheen_roughness == b.sheen_roughness && a.anisotropy == b.anisotropy && a.anisotropy_rotation == b.anisotropy_rotation &&
-           a.subsurface_color == b.subsurface_color && a.subsurface_thickness == b.subsurface_thickness && a.anti_tiling == b.anti_tiling;
+           a.subsurface_color == b.subsurface_color && a.subsurface_thickness == b.subsurface_thickness && a.anti_tiling == b.anti_tiling &&
+           a.max_vertex_offset == b.max_vertex_offset;
+}
+// Culling bounds of geometry drawn with `m` (ADR-0245): a vertex function may move vertices up to
+// max_vertex_offset metres beyond the mesh, so the box grows by that much on every side.
+Aabb vertex_offset_bounds(Aabb b, const Material& m) noexcept {
+    if (!m.vertex_stage || !b.valid() || !(m.max_vertex_offset > 0.0f)) return b;
+    const Vec3 g{std::min(m.max_vertex_offset, 100.0f)};
+    b.min = b.min - g;
+    b.max = b.max + g;
+    return b;
 }
 struct LightingUniforms {
     Vec4 camera_pos;
@@ -2363,6 +2374,11 @@ float max_axis_scale(const Mat4& m) noexcept {
 }
 } // namespace
 
+Aabb SceneRenderer::Draw::culling_bounds() const noexcept {
+    if (group >= 0) return world_bounds;
+    return vertex_offset_bounds(skinned ? world_bounds : mesh->bounds.transformed(model), *material);
+}
+
 Result<std::uint32_t> SceneRenderer::create_instance_group(const InstanceGroupDesc& desc) {
     if (!desc.mesh || !desc.mesh->valid()) return Error{ErrorCode::InvalidArgument, "instance group: invalid mesh"};
     if (desc.models.empty()) return Error{ErrorCode::InvalidArgument, "instance group: no instances"};
@@ -2376,9 +2392,9 @@ Result<std::uint32_t> SceneRenderer::create_instance_group(const InstanceGroupDe
     const auto n = static_cast<std::uint32_t>(desc.models.size());
     const std::uint32_t cluster_size = std::clamp(desc.cluster_size, 1u, 4096u);
     std::vector<Aabb> boxes(n);
-    Aabb all = desc.mesh->bounds.transformed(desc.models[0]);
+    Aabb all = vertex_offset_bounds(desc.mesh->bounds.transformed(desc.models[0]), desc.material);
     for (std::uint32_t i = 0; i < n; ++i) {
-        boxes[i] = desc.mesh->bounds.transformed(desc.models[i]);
+        boxes[i] = vertex_offset_bounds(desc.mesh->bounds.transformed(desc.models[i]), desc.material);
         all.min = min(all.min, boxes[i].min);
         all.max = max(all.max, boxes[i].max);
     }
@@ -2940,7 +2956,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             Draw& d = draws_[i];
             DrawVisibility& r = vis[i];
             r = {};
-            const Aabb world = d.has_bounds() ? d.world_bounds : d.mesh->bounds.transformed(d.model);
+            const Aabb world = d.culling_bounds();
             const bool blended = d.material->blend != MaterialBlend::Opaque;
             LodHistory::Entry previous;
             if (lod_history && d.motion_id != 0) previous = lod_prev_.entry(lod_key(d));
@@ -3096,7 +3112,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     if (!local_views.empty())
         for (const Draw& d : draws_) {
             if (!d.material->cast_shadows || d.material->blend != MaterialBlend::Opaque) continue;
-            const Aabb world = d.has_bounds() ? d.world_bounds : d.mesh->bounds.transformed(d.model);
+            const Aabb world = d.culling_bounds();
             for (std::size_t v = 0; v < local_views.size(); ++v)
                 if (local_views[v].frustum.intersects(world)) local_casters[v].push_back(&d);
         }
@@ -3470,7 +3486,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             args.push_back({l.index_count, 0, l.first_index, 0, 0});
             for (std::uint32_t k = 0; k < b.instance_count; ++k) {
                 const Draw* d = visible[b.instance_offset + k];
-                const Aabb world = d->skinned ? d->world_bounds : d->mesh->bounds.transformed(d->model);
+                const Aabb world = d->culling_bounds();
                 bounds.emplace_back(world.min, static_cast<float>(bi));
                 bounds.emplace_back(world.max, static_cast<float>(b.instance_offset));
             }

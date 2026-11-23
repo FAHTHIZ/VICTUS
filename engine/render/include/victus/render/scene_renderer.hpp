@@ -101,6 +101,9 @@ struct Material {
     math::Vec3 subsurface_color{0, 0, 0};
     float subsurface_thickness{0.5f};
     float anti_tiling{0.0f}; // 0..1 macro variation, > 0.5 also a distant large-scale blend (ADR-0240)
+    // Metres `vertex_stage` may move a vertex (ADR-0245): culling, shadow-caster and occlusion
+    // bounds grow by this much (capped at 100 m). Ignored without a vertex stage.
+    float max_vertex_offset{0.0f};
     bool nearest_filter{false}; // point sampling (pixel art); default is trilinear
     rhi::TextureHandle base_color_texture, metallic_roughness_texture, normal_texture, emissive_texture;
     bool double_sided{false};
@@ -1029,7 +1032,8 @@ public:
     // cluster instead of per instance, and nothing is re-uploaded. Trade-offs: a visible cluster
     // draws all its copies (no per-instance frustum culling inside it), every copy of a cluster
     // uses the cluster's LOD (picked from the cluster bounds and its largest-scale copy), and
-    // group draws are not GPU occlusion culled and write no object motion vectors (static).
+    // group draws are not GPU occlusion culled and write no object motion vectors (static;
+    // vertex functions still do, ADR-0244).
     // The mesh must outlive the group. Groups are owned by this renderer and die with it.
     struct InstanceGroupDesc {
         const GpuMesh* mesh{nullptr};
@@ -1154,7 +1158,7 @@ public:
     // Every Material field packed as 32-bit words (floats by bit pattern); equal signatures mean
     // identical materials (ADR-0229). Public so file-local helpers in the renderer can fill it.
     struct MaterialSignature {
-        std::array<std::uint32_t, 72> words; // 71 used, zero padded to whole 32-byte hash blocks
+        std::array<std::uint32_t, 72> words; // all 72 used: nine whole 32-byte hash blocks
         bool operator==(const MaterialSignature&) const noexcept = default;
     };
 private:
@@ -1180,6 +1184,9 @@ private:
         std::int32_t group{-1};   // retained instance group slot (ADR-0162); world_bounds holds the cluster bounds
         std::uint32_t cluster_first{0}, cluster_count{0}; // its instances in the group buffer
         bool has_bounds() const noexcept { return skinned || group >= 0; }
+        // World bounds for culling: mesh bounds * model or world_bounds, grown by the material's
+        // max_vertex_offset for vertex functions (ADR-0245; group clusters are grown when built).
+        [[nodiscard]] math::Aabb culling_bounds() const noexcept;
     };
     // Storage buffer a skinned draw's palette offsets index: its baked palette or this frame's.
     [[nodiscard]] rhi::BufferHandle palette_of(const Draw& d) const noexcept { return d.palette_src ? d.palette_src : palette_buffer_; }

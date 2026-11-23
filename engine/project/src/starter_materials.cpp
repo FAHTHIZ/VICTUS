@@ -180,6 +180,7 @@ void add_starter_material_files(std::vector<TemplateFile>& files) {
         m.shader = parse(kWindShaderUuid);
         m.shader_params[0] = {1.0f, 0.0f, 0.35f, 0.35f};
         m.shader_params[1] = {0.9f, flutter, 5.0f, 0.0f};
+        m.max_vertex_offset = 0.5f; // about 0.35 m of bend at a 10 m crown top plus flutter (ADR-0245)
         if (leaves) {
             m.subsurface_color = {0.32f, 0.42f, 0.08f}; // sunlight glowing through the leaves
             m.subsurface_thickness = 0.35f;

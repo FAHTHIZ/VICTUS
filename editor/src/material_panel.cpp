@@ -412,6 +412,12 @@ void Editor::draw_material_editor() {
             else
                 ImGui::TextDisabled("compiled; saved edits reload live");
         }
+        if (!m.shader.is_nil()) {
+            mark(ImGui::DragFloat("Max Vertex Offset", &m.max_vertex_offset, 0.01f, 0.0f, 100.0f, "%.2f m"), F::MaxVertexOffset);
+            ImGui::SetItemTooltip("How far the shader's vertex() function moves vertices from the mesh. Culling bounds grow by "
+                                  "this much so swaying or displaced geometry is not culled while on screen (ADR-0245)");
+            inherit_button(F::MaxVertexOffset);
+        }
         // Named parameters and textures declared by the shader (ADR-0171); raw slots otherwise.
         const render::SurfaceDeclarations* decl = sh && cache_ ? cache_->surface_declarations(m.shader) : nullptr;
         const bool named = decl && (!decl->params.empty() || !decl->textures.empty());

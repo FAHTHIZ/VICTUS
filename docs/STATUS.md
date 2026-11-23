@@ -3755,3 +3755,26 @@ Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, Xvfb + lavapipe):
 - `tools/shaders/compile_shaders.py --check`: built-in shaders up to date (64).
 - clang-tidy on scene_renderer.cpp, both surface_shader.cpp files and the new test: 0 diagnostics. The only message is the GCC-only `-Wshadow=local` flag being unknown to clang.
 - Next task: culling-bounds growth for vertex functions (a per-material maximum vertex offset, like Unreal's Max World Position Offset Displacement).
+
+## 2026-11-24 — Culling-bounds growth for vertex functions (ADR-0245)
+
+Built:
+- `MaterialAsset::max_vertex_offset` (`.vmat` key `max_vertex_offset`): clamped to 0..100 m, omitted at 0, inherited and overridable (`MaterialField::MaxVertexOffset`). The Material Editor shows it as "Max Vertex Offset" in the Shader section.
+- `render::Material::max_vertex_offset`, which joins the material signature (72 words).
+- `Draw::culling_bounds()` grows mesh or skinned bounds by the offset when the material has a vertex stage. It is used for visibility and LOD classification, local-light caster lists and GPU occlusion bounds. Instance groups grow each copy's box when the group is built.
+- The starter leaves and bark materials declare 0.5 m.
+- Tests:
+  - `material max vertex offset round trips, clamps, inherits and is omitted at its default (ADR-0245)`
+  - `gpu vertex functions: max_vertex_offset keeps displaced geometry from being culled (ADR-0245)`
+
+Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, Xvfb + lavapipe):
+- The GPU case: a bar submitted 9 m left of the view and moved 9 m right by `vertex()`.
+  - With mesh bounds only, it is culled (`culled == 1`) and the frame centre stays black.
+  - With `max_vertex_offset = 9.5`, it is drawn (`visible == 1`) with a white centre, and also through a retained instance group.
+  - On a material without a vertex stage, the offset is ignored (`culled == 1`).
+- `victus_gpu_tests` on vertex functions, discard detection, trees, surface shaders and instance groups: 11 cases, 445 assertions passed.
+- `victus_asset_tests -tc="material*"`: 9 cases passed.
+- Full `VICTUS_REQUIRE_GPU=1 ctest -j2 -E perf_budgets`: 100 % passed, including `victus_editor_tests`.
+- `ctest -R perf_budgets`: all budgets met. Frame p95 values were 218, 5.8, 11.2, 11.4, 283, 240 and 85 ms, in the budget file's scene order.
+- clang-tidy on material.cpp, material_panel.cpp, starter_materials.cpp, scene_renderer.cpp and gpu_vertex_motion_tests.cpp: 0 diagnostics. The only message is the GCC-only `-Wshadow=local` flag being unknown to clang.
+- Next task: object-space triplanar mapping for moving objects (Rendering gaps).

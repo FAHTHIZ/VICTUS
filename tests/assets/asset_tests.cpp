@@ -710,6 +710,33 @@ TEST_CASE("material anti-tiling round trips, clamps, inherits and is omitted at 
     CHECK(apply_instance(parent, child).anti_tiling == doctest::Approx(0.0f)); // overridden
 }
 
+TEST_CASE("material max vertex offset round trips, clamps, inherits and is omitted at its default (ADR-0245)") {
+    auto m = MaterialAsset::from_json(*json::parse(R"({"victus_material": 1, "max_vertex_offset": 0.4})"));
+    REQUIRE(m.ok());
+    CHECK(m->max_vertex_offset == doctest::Approx(0.4f));
+    auto back = MaterialAsset::from_json(m->to_json());
+    REQUIRE(back.ok());
+    CHECK(back->max_vertex_offset == doctest::Approx(0.4f));
+    CHECK(MaterialAsset{}.to_json().find("max_vertex_offset") == nullptr);
+    auto wild = MaterialAsset::from_json(*json::parse(R"({"victus_material": 1, "max_vertex_offset": 1e6})"));
+    REQUIRE(wild.ok());
+    CHECK(wild->max_vertex_offset == doctest::Approx(100.0f));
+    auto negative = MaterialAsset::from_json(*json::parse(R"({"victus_material": 1, "max_vertex_offset": -2})"));
+    REQUIRE(negative.ok());
+    CHECK(negative->max_vertex_offset == 0.0f);
+    CHECK_FALSE(MaterialAsset::from_json(*json::parse(R"({"victus_material": 1, "max_vertex_offset": "far"})")).ok());
+    MaterialAsset parent;
+    parent.max_vertex_offset = 2.0f;
+    MaterialAsset child;
+    child.parent = Uuid::generate();
+    child.overrides = 0;
+    CHECK(apply_instance(parent, child).max_vertex_offset == doctest::Approx(2.0f)); // inherited
+    child.overrides = field_bit(MaterialField::MaxVertexOffset);
+    child.max_vertex_offset = 0.0f;
+    CHECK(apply_instance(parent, child).max_vertex_offset == doctest::Approx(0.0f)); // overridden
+    CHECK(std::string(field_key(MaterialField::MaxVertexOffset)) == "max_vertex_offset");
+}
+
 TEST_CASE("material subsurface round trips, clamps, inherits and is omitted at its default (ADR-0233)") {
     auto m = MaterialAsset::from_json(
         *json::parse(R"({"victus_material": 1, "subsurface_color": [1.0, 0.3, 0.2], "subsurface_thickness": 0.2})"));

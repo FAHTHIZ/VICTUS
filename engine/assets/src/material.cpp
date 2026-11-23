@@ -104,6 +104,7 @@ const char* field_key(MaterialField f) noexcept {
     case MaterialField::SubsurfaceColor: return "subsurface_color";
     case MaterialField::SubsurfaceThickness: return "subsurface_thickness";
     case MaterialField::AntiTiling: return "anti_tiling";
+    case MaterialField::MaxVertexOffset: return "max_vertex_offset";
     default: return "";
     }
 }
@@ -148,6 +149,7 @@ void MaterialAsset::copy_field(const MaterialAsset& src, MaterialField f) {
     case MaterialField::SubsurfaceColor: subsurface_color = src.subsurface_color; break;
     case MaterialField::SubsurfaceThickness: subsurface_thickness = src.subsurface_thickness; break;
     case MaterialField::AntiTiling: anti_tiling = src.anti_tiling; break;
+    case MaterialField::MaxVertexOffset: max_vertex_offset = src.max_vertex_offset; break;
     default: break;
     }
 }
@@ -229,6 +231,8 @@ json::Value MaterialAsset::to_json() const {
         v.set("subsurface_thickness", num(subsurface_thickness));
     if (anti_tiling != 0.0f || (is_instance() && overrides_field(MaterialField::AntiTiling)))
         v.set("anti_tiling", num(anti_tiling)); // omitted when off
+    if (max_vertex_offset != 0.0f || (is_instance() && overrides_field(MaterialField::MaxVertexOffset)))
+        v.set("max_vertex_offset", num(max_vertex_offset)); // omitted when 0
     if (!is_instance()) return v;
     // Instances store only what they override.
     Value inst = Value::object();
@@ -265,7 +269,7 @@ Result<MaterialAsset> MaterialAsset::from_json(const json::Value& v) {
                     r.vec("sheen_color", &m.sheen_color.x, 3, 3) && r.number("sheen_roughness", m.sheen_roughness) &&
                     r.number("anisotropy", m.anisotropy) && r.number("anisotropy_rotation", m.anisotropy_rotation) &&
                     r.vec("subsurface_color", &m.subsurface_color.x, 3, 3) && r.number("subsurface_thickness", m.subsurface_thickness) &&
-                    r.number("anti_tiling", m.anti_tiling);
+                    r.number("anti_tiling", m.anti_tiling) && r.number("max_vertex_offset", m.max_vertex_offset);
     if (!ok) return make_error(ErrorCode::ParseError, r.error);
     m.emissive = {emissive[0], emissive[1], emissive[2], 1.0f};
     if (!r.uuid("shader", m.shader)) return make_error(ErrorCode::ParseError, r.error);
@@ -333,6 +337,7 @@ Result<MaterialAsset> MaterialAsset::from_json(const json::Value& v) {
         *ch = std::isfinite(*ch) ? std::clamp(*ch, 0.0f, 1.0f) : 0.0f;
     m.subsurface_thickness = std::isfinite(m.subsurface_thickness) ? std::clamp(m.subsurface_thickness, 0.0f, 1.0f) : 0.5f;
     m.anti_tiling = std::isfinite(m.anti_tiling) ? std::clamp(m.anti_tiling, 0.0f, 1.0f) : 0.0f;
+    m.max_vertex_offset = std::isfinite(m.max_vertex_offset) ? std::clamp(m.max_vertex_offset, 0.0f, 100.0f) : 0.0f;
     m.anisotropy_rotation = std::isfinite(m.anisotropy_rotation) ? std::remainder(m.anisotropy_rotation, 6.2831853f) : 0.0f;
     m.alpha_cutoff = std::clamp(m.alpha_cutoff, 0.0f, 1.0f);
     m.emissive_strength = std::max(m.emissive_strength, 0.0f);
