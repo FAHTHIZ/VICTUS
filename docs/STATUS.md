@@ -3607,3 +3607,13 @@ Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`):
 - `victus new --template 3d` bakes and `victus run --quality high --screenshot` renders the starter scene with the HDR sky.
 - Next task: calibrate template lighting (sun intensity and elevation, exposure) against the sun-free sky.
 
+## 2026-11-23 — Template lighting calibration (ADR-0237)
+
+Built:
+- `engine/project/src/templates.cpp`: `hdr_sky_sun` (5.0 sun 35 degrees up, side-lit from behind the camera) and `kHdrSkyExposure` (0.6) for the 3D, no-code 3D and multiplayer templates (the three that use the starter HDR sky). Other templates and engine defaults are unchanged.
+
+Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`):
+- `victus new` + `victus run --quality high --frames 40 --screenshot` for `3d`, `nocode3d` and `multiplayer` under Xvfb on lavapipe: 0 script errors; long readable shadows, distinct lit and shadow sides and no clipped paving (compared with sun 3 / 4 / 5, elevation 35 / 40 / 62 degrees, exposure 1 / 0.6 / auto).
+- `ctest -j2 -R "project|cli|export|editor"` under Xvfb: all passed (`victus_cli_render_compare` skipped as usual).
+- Next task: lava surface (domain-warped noise with HDR emissive cracks) in the no-code 3D template.
+

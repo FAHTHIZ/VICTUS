@@ -10,6 +10,7 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 
 ### Added
 
+- Calibrated lighting in the 3D, no-code 3D and multiplayer templates (ADR-0237): a stronger, lower afternoon sun from the side and exposure 0.6, so new projects start with long readable shadows and no washed-out ground. ([evidence](docs/STATUS.md#2026-11-23--template-lighting-calibration-adr-0237))
 - Sun extraction from HDR skies (ADR-0236). The photographed sun in an HDR sky is removed before its ambient and reflections are baked, so it no longer doubles the scene's directional light (washed-out shadows, a second highlight); a scene with only an HDR gets a matching shadowed sun from it, and lightmaps bake under the HDR sky instead of the analytic one. ([evidence](docs/STATUS.md#2026-11-23--sun-extraction-from-hdr-skies-adr-0236))
 - IES light profiles (ADR-0235). Manufacturer `.ies` photometric files (LM-63 Type C, all horizontal symmetries) import as texture assets baked into point-light cookie panoramas, so a point light that uses one throws the real fixture's beam: scalloped downlight cones, wall washers and street-lamp patterns. ([evidence](docs/STATUS.md#2026-11-23--ies-light-profiles-adr-0235))
 - AgX tonemapper (ADR-0234): Environment `tonemapper: "agx"` gives Blender's default filmic view, which keeps bright saturated colours (fire, neon, sunsets) close to their hue and rolls them towards white instead of skewing them as the ACES fit does. ACES stays the default. ([evidence](docs/STATUS.md#2026-11-23--agx-tonemapper-adr-0234))

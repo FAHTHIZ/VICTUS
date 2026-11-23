@@ -2586,3 +2586,17 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 **Evidence:** `victus_render_tests -tc="sun extraction*"`; numbers are in STATUS.md for the commit.
 
 **Consequences:** HDR-lit scenes have darker, sun-coloured shadows and reflections without a duplicated hotspot. Scenes that relied on the photographed sun as their only key light (an HDR with no directional light) keep it: the renderer and the lightmap baker synthesize a shadowed directional light from the removed sun, rotated with the sky and scaled by its intensity. Lightmaps baked before this change are stale relative to the runtime and should be rebaked.
+
+### ADR-0237: Template lighting calibrated against the sun-free HDR sky
+
+**Status:** Accepted (2026-11-23). Second item of the look pass.
+
+**Context:** The 3D, no-code 3D and multiplayer templates lit their HDR-sky scenes with a 3.0 sun about 62 degrees up and exposure 1. With the photographed sun removed from the ambient (ADR-0236) the sun is the only key light, and at that height and strength the starter scenes read flat and washed out: short shadows straight under props, little difference between lit and shadow sides, and the pale paving clipping towards white. Renders of the 3D template at sun 3/4/5, elevation 35-62 degrees and exposure 1/0.6/auto showed a 5.0 sun at 35 degrees from behind the camera's right, with exposure 0.6, gave the clearest form and shadow reading with no clipped ground; auto exposure matched it after adaptation but adapts visibly at start.
+
+**Decision:** `hdr_sky_sun` (intensity 5.0, direction (0.63, -0.57, -0.53)) and `kHdrSkyExposure = 0.6` for every template that uses the starter HDR sky. Templates on the analytic sky keep the previous sun. Engine defaults (`render::Environment`, `EnvironmentComponent`) are unchanged so existing scenes and GPU goldens are unaffected.
+
+**Alternatives:** (1) Auto exposure in the templates: same result after a second, but a visible fade-in at start and non-deterministic first frames for screenshots. (2) AgX: flatter at this exposure; ACES stays.
+
+**Evidence:** STATUS.md entry for the commit (template renders under Xvfb, `victus_project_tests`).
+
+**Consequences:** New projects from those templates start with long side-lit shadows and a correct exposure. Existing projects keep their scene files.

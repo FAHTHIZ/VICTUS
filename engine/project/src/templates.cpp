@@ -291,14 +291,20 @@ Entity camera_3d(Scene& s, math::Vec3 eye, math::Vec3 target) {
     return cam;
 }
 
-void sun(Scene& s) {
+void sun(Scene& s, float intensity = 3.0f, math::Vec3 direction = {-0.4f, -1.0f, -0.3f}) {
     const Entity e = add(s, "Sun", {0, 10, 0});
-    s.world().get<Transform>(e)->rotation = look_rotation({-0.4f, -1.0f, -0.3f});
+    s.world().get<Transform>(e)->rotation = look_rotation(direction);
     auto& l = s.world().add<LightComponent>(e);
     l.type = LightComponent::Type::Directional;
     l.color = {1.0f, 0.96f, 0.9f, 1};
-    l.intensity = 3.0f;
+    l.intensity = intensity;
 }
+
+// The key light of the HDR-sky templates (ADR-0237): an afternoon sun 35 degrees up, from
+// behind the camera's right so shapes get a lit side, a shadow side and long readable shadows,
+// bright against the sun-free sky ambient (ADR-0236). Pair with kHdrSkyExposure.
+void hdr_sky_sun(Scene& s) { sun(s, 5.0f, {0.6275f, -0.5736f, -0.5265f}); }
+constexpr float kHdrSkyExposure = 0.6f;
 
 // ---- In-game UI (HUD) ---------------------------------------------------------------------------
 
@@ -397,7 +403,7 @@ void character_visual(Scene& s, Entity parent, const std::string& character, flo
 
 void build_3d(Scene& s, const TemplateOptions& options) {
     attach(s, camera_3d(s, {0, 4.5f, 9}, {0, 0.6f, 0}), "scripts/follow_camera.luau");
-    sun(s);
+    hdr_sky_sun(s);
     {
         // Scene look: filmic tonemapping with subtle bloom, ambient occlusion (SSAO) and sun contact
         // shadows (ADR-0183) that ground the player and props.
@@ -407,6 +413,7 @@ void build_3d(Scene& s, const TemplateOptions& options) {
         env.shadow_distance = 30.0f;
         env.contact_shadow_length = 0.3f;
         env.environment_map = starter_sky_uuid(); // CC0 HDR sky: background and image-based lighting
+        env.exposure = kHdrSkyExposure;
     }
     const Entity ground = add(s, "Ground", {0, 0, 0});
     s.world().get<Transform>(ground)->scale = {20, 1, 20};
@@ -668,13 +675,14 @@ void build_multiplayer(Scene& s, const TemplateOptions& options) {
         p.set("offset", json::Array{0.0, 7.0, 9.0});
         return p;
     }());
-    sun(s);
+    hdr_sky_sun(s);
     {
         auto& env = s.world().add<gameplay::EnvironmentComponent>(add(s, "Environment", {0, 0, 0}));
         env.bloom_intensity = 0.05f;
         env.ao_intensity = 1.0f;
         env.shadow_distance = 34.0f;
         env.contact_shadow_length = 0.3f;
+        env.exposure = kHdrSkyExposure;
         env.environment_map = starter_sky_uuid(); // CC0 HDR sky (ADR-0197)
     }
     const Entity ground = add(s, "Arena Floor", {0, 0, 0});
@@ -1812,7 +1820,7 @@ void build_nocode3d(Scene& s, const TemplateOptions& options) {
     auto& follow = s.world().add<CameraFollowComponent>(cam);
     follow.offset = {0, 5.0f, 8.0f};
     follow.smoothing = 5;
-    sun(s);
+    hdr_sky_sun(s);
     {
         auto& env = s.world().add<gameplay::EnvironmentComponent>(add(s, "Environment", {0, 0, 0}));
         env.bloom_intensity = 0.05f;
@@ -1821,6 +1829,7 @@ void build_nocode3d(Scene& s, const TemplateOptions& options) {
         env.contact_shadow_length = 0.3f;
         env.sky_zenith = {0.16f, 0.36f, 0.8f, 1};
         env.sky_horizon = {0.7f, 0.8f, 0.92f, 1};
+        env.exposure = kHdrSkyExposure;
         // A CC0 HDR sky (data/materials/LICENSE.md) lights the scene and fills the background.
         env.environment_map = starter_sky_uuid();
     }
