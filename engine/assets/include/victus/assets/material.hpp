@@ -24,6 +24,8 @@
 //     "clearcoat_roughness": 0.03  // the coat's own roughness
 //     "sheen_color": [r, g, b]     // cloth/velvet sheen, linear (ADR-0231); black = none
 //     "sheen_roughness": 0.3       // how wide the sheen rim spreads
+//     "anisotropy": 0.0            // brushed metal / hair highlight stretch 0..1 (ADR-0232)
+//     "anisotropy_rotation": 0.0   // radians from the mesh tangent
 //   }
 //
 // Material instances name a parent and contain only the fields they override; everything else
@@ -55,11 +57,12 @@ enum class MaterialField : std::uint8_t {
     BaseColor, BaseColorTexture, Metallic, Roughness, MetallicRoughnessTexture, NormalTexture, NormalScale, Emissive,
     EmissiveStrength, EmissiveTexture, AlphaCutoff, UvScale, UvOffset, Filter, Unlit, DoubleSided, Shader, ShaderParams,
     VertexAlpha, CoverageResponse, Blend, OcclusionStrength, ShaderTextures, Responsive, Triplanar, TriplanarSharpness,
-    Clearcoat, ClearcoatRoughness, SheenColor, SheenRoughness, Count
+    Clearcoat, ClearcoatRoughness, SheenColor, SheenRoughness, Anisotropy, AnisotropyRotation, Count
 };
 inline constexpr std::size_t kMaterialFieldCount = static_cast<std::size_t>(MaterialField::Count);
-[[nodiscard]] constexpr std::uint32_t field_bit(MaterialField f) noexcept { return 1u << static_cast<unsigned>(f); }
-inline constexpr std::uint32_t kAllMaterialFields = (1u << kMaterialFieldCount) - 1u;
+[[nodiscard]] constexpr std::uint64_t field_bit(MaterialField f) noexcept { return std::uint64_t{1} << static_cast<unsigned>(f); }
+static_assert(kMaterialFieldCount < 64, "MaterialAsset::overrides holds one bit per field");
+inline constexpr std::uint64_t kAllMaterialFields = (std::uint64_t{1} << kMaterialFieldCount) - 1u;
 // JSON key of a field ("base_color", ...).
 [[nodiscard]] const char* field_key(MaterialField f) noexcept;
 inline constexpr std::size_t kMaxMaterialDepth = 16; // parent chain length limit
@@ -85,6 +88,10 @@ struct MaterialAsset {
     // Sheen (ADR-0231): the soft rim of cloth, velvet, felt and peach fuzz. Black = none.
     math::Vec3 sheen_color{0, 0, 0};
     float sheen_roughness{0.3f};
+    // Anisotropy (ADR-0232): stretches the highlight along the tangent rotated by
+    // anisotropy_rotation (radians): brushed metal, hair, satin. 0 = isotropic.
+    float anisotropy{0.0f};
+    float anisotropy_rotation{0.0f};
     TextureFilter filter{TextureFilter::Linear};
     bool unlit{false};
     bool double_sided{false};
@@ -119,7 +126,7 @@ struct MaterialAsset {
     // Instances: the parent material (nil = a standalone material) and which fields this file
     // sets. from_json() records the keys present; to_json() writes only those for instances.
     Uuid parent;
-    std::uint32_t overrides{kAllMaterialFields};
+    std::uint64_t overrides{kAllMaterialFields};
 
     [[nodiscard]] bool is_instance() const noexcept { return !parent.is_nil(); }
     [[nodiscard]] bool overrides_field(MaterialField f) const noexcept { return (overrides & field_bit(f)) != 0; }

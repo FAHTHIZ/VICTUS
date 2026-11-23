@@ -632,6 +632,61 @@ TEST_CASE("assets: glTF KHR_materials_sheen factors import and survive the cooke
     CHECK(back->materials[0].sheen_roughness == doctest::Approx(0.55f));
 }
 
+TEST_CASE("material anisotropy round trips, clamps, wraps, inherits and is omitted at its default (ADR-0232)") {
+    auto m = MaterialAsset::from_json(*json::parse(R"({"victus_material": 1, "anisotropy": 0.7, "anisotropy_rotation": 1.25})"));
+    REQUIRE(m.ok());
+    CHECK(m->anisotropy == doctest::Approx(0.7f));
+    CHECK(m->anisotropy_rotation == doctest::Approx(1.25f));
+    auto back = MaterialAsset::from_json(m->to_json());
+    REQUIRE(back.ok());
+    CHECK(back->anisotropy == doctest::Approx(0.7f));
+    CHECK(back->anisotropy_rotation == doctest::Approx(1.25f));
+    CHECK(MaterialAsset{}.to_json().find("anisotropy") == nullptr);
+    CHECK(MaterialAsset{}.to_json().find("anisotropy_rotation") == nullptr);
+    auto wild = MaterialAsset::from_json(*json::parse(R"({"victus_material": 1, "anisotropy": 4, "anisotropy_rotation": 7.0})"));
+    REQUIRE(wild.ok());
+    CHECK(wild->anisotropy == doctest::Approx(1.0f));
+    CHECK(wild->anisotropy_rotation == doctest::Approx(7.0f - 6.2831853f)); // wrapped to one turn
+    CHECK_FALSE(MaterialAsset::from_json(*json::parse(R"({"victus_material": 1, "anisotropy": "brushed"})")).ok());
+    MaterialAsset parent;
+    parent.anisotropy = 0.5f;
+    MaterialAsset child;
+    child.parent = Uuid::generate();
+    child.overrides = 0;
+    CHECK(apply_instance(parent, child).anisotropy == doctest::Approx(0.5f)); // inherited
+    child.overrides = field_bit(MaterialField::Anisotropy);
+    child.anisotropy = 0.0f;
+    CHECK(apply_instance(parent, child).anisotropy == doctest::Approx(0.0f));
+}
+
+TEST_CASE("assets: glTF KHR_materials_anisotropy factors import and survive the cooked format (ADR-0232)") {
+    TempDir dir("victus_gltf_aniso");
+    test::GltfFixture fx;
+    json::Value mat = fx.doc["materials"][0];
+    json::Value an = json::Value::object();
+    an.set("anisotropyStrength", 0.6);
+    an.set("anisotropyRotation", 0.8);
+    json::Value ext = json::Value::object();
+    ext.set("KHR_materials_anisotropy", an);
+    mat.set("extensions", ext);
+    fx.doc.set("materials", json::Value(json::Array{mat}));
+    fx.doc.set("extensionsUsed", json::Value(json::Array{json::Value("KHR_materials_anisotropy")}));
+    fx.set_buffer_uri("quad.bin");
+    write_bytes(dir.path / "quad.bin", fx.bin);
+    write_text(dir.path / "brushed.gltf", json::stringify(fx.doc));
+    auto m = import_gltf(dir.path / "brushed.gltf", {}, dir.path);
+    REQUIRE_MESSAGE(m.ok(), (m.ok() ? "" : m.error().message));
+    REQUIRE(m->materials.size() == 1);
+    CHECK(m->materials[0].anisotropy == doctest::Approx(0.6f));
+    CHECK(m->materials[0].anisotropy_rotation == doctest::Approx(0.8f));
+    CookedHeader h;
+    h.kind = AssetKind::Model;
+    auto back = deserialize_model(serialize(h, *m));
+    REQUIRE(back.ok());
+    CHECK(back->materials[0].anisotropy == doctest::Approx(0.6f));
+    CHECK(back->materials[0].anisotropy_rotation == doctest::Approx(0.8f));
+}
+
 TEST_CASE("assets: HDR textures cook to half floats with SH irradiance and an LDR preview") {
     TempDir dir("victus_hdr_cook");
     render::ImageF env;

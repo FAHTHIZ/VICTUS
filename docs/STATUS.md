@@ -3537,3 +3537,18 @@ Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, Mesa lavapipe Vulkan, `SD
 - Full `ctest -j2` (48 suites): 47 passed on the first run; `victus_docs_lint` failed on the earlier ADR-0226 to ADR-0230 missing from CHANGELOG.md, fixed in this commit with a Changed entry (`python3 tools/lint/check_docs.py` passes).
 - Not verified: physical GPUs, Metal, GLES device runs (the ESSL output compiled through the shader tool only).
 - Next task: anisotropic specular (`KHR_materials_anisotropy`) for brushed metal and hair, then subsurface scattering for skin.
+
+## 2026-11-23 — Anisotropic specular (ADR-0232)
+
+Built:
+- `render::Material::anisotropy` / `anisotropy_rotation`, an `anisotropy` vec4 in the material uniform block; `pbr.frag` anisotropy frame from the mesh tangent rotated about the shading normal (horizontal fallback without tangents), glTF roughness mapping `alpha_t = mix(alpha, 1, s^2)`, Burley anisotropic GGX with height-correlated anisotropic Smith visibility for the sun and point/spot lights (`brdf_any` keeps the isotropic `brdf()` at strength 0), bent reflection vector for IBL/SSR. `pack_material` / `same_material` cover the fields (`sizeof(Material)` 288, 66/72 signature words).
+- `.vmat` `anisotropy` and `anisotropy_rotation` (wrapped to one turn), omitted at defaults, clamped, inherited by instances; `MaterialAsset::overrides` widened to 64 bits (the 32-bit mask was full); glTF `KHR_materials_anisotropy` factors with a warning for the direction texture; cooked model format 14; `GpuAssetCache` passes both through; Studio material panel Anisotropy and Anisotropy Rotation.
+- Tests: `gpu anisotropy: the highlight stretches along the rotated tangent`, `material anisotropy round trips, clamps, wraps, inherits and is omitted at its default`, `assets: glTF KHR_materials_anisotropy factors import and survive the cooked format`.
+
+Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, Mesa lavapipe Vulkan, `SDL_VIDEO_DRIVER=offscreen VICTUS_REQUIRE_GPU=1`):
+- `python3 tools/shaders/compile_shaders.py` regenerated pbr.frag and pbr.frag#fp16 (64 shaders); `--check` up to date.
+- `victus_gpu_tests -tc="gpu anisotropy*"`: brightness-weighted spread (px, x/y) of near-white highlight pixels on a steel sphere (roughness 0.25): isotropic 4.73/4.59 (278 px), strength 0.9 along the tangent 27.47/2.72 (782 px), rotated 90 degrees 2.12/25.07 (630 px); strength 0 identical at any rotation. `build/rel/test_output/aniso_*.png` checked by eye.
+- `victus_gpu_tests -tc="gpu sheen*,gpu clear coat*"` unchanged (clear coat peaks 117 / 226 / 174).
+- Full `ctest -j2`: 48/48 passed (762 s).
+- Not verified: physical GPUs, Metal, GLES device runs.
+- Next task: subsurface scattering for skin, wax and leaves (wrapped diffuse with a subsurface colour and thickness-based transmission).

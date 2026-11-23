@@ -722,6 +722,13 @@ private:
             if (sh.sheen_color_texture.texture || sh.sheen_roughness_texture.texture)
                 warn(out.name + ": KHR_materials_sheen textures are ignored (the sheen uses its factors)");
         }
+        if (m->has_anisotropy) {
+            const auto& an = m->anisotropy;
+            out.anisotropy = std::isfinite(an.anisotropy_strength) ? std::clamp(an.anisotropy_strength, 0.0f, 1.0f) : 0.0f;
+            out.anisotropy_rotation = std::isfinite(an.anisotropy_rotation) ? an.anisotropy_rotation : 0.0f;
+            if (an.anisotropy_texture.texture)
+                warn(out.name + ": the KHR_materials_anisotropy texture is ignored (the anisotropy uses its factors)");
+        }
         out.double_sided = m->double_sided;
         out.unlit = m->unlit;
         const auto index = static_cast<std::uint32_t>(model_.materials.size());

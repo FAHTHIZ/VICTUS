@@ -26,7 +26,7 @@ namespace victus::assets {
 // v5: block-compressed texture variants (BC/ASTC, ADR-0047); v6: mesh LODs (ADR-0049).
 // v9: RGBA8 mip levels may be stored without pixels when a compressed variant covers them
 // (mobile export profile, ADR-0149).
-inline constexpr std::uint32_t kCookedFormatVersion = 13; // 7: morph targets, weight channels; 8: material occlusion; 10: node lights and cameras; 11: clear coat; 12: corrective shapes; 13: sheen
+inline constexpr std::uint32_t kCookedFormatVersion = 14; // 7: morph targets, weight channels; 8: material occlusion; 10: node lights and cameras; 11: clear coat; 12: corrective shapes; 13: sheen; 14: anisotropy
 
 enum class AssetKind : std::uint8_t { Unknown = 0, Texture = 1, Model = 2, Scene = 3, Script = 4, Audio = 5, Prefab = 6, Material = 7, Shader = 8, SpriteSheet = 9, Tileset = 10, Terrain = 11, BehaviorTree = 12, Sequence = 13, StringTable = 14, AnimController = 15 };
 [[nodiscard]] const char* to_string(AssetKind kind) noexcept;
@@ -76,6 +76,9 @@ struct ModelMaterial {
     // KHR_materials_sheen factors (ADR-0231); black = no sheen. Sheen textures are not imported.
     float sheen_color[3]{0.0f, 0.0f, 0.0f};
     float sheen_roughness{0.0f};
+    // KHR_materials_anisotropy factors (ADR-0232); 0 = isotropic. The direction texture is not imported.
+    float anisotropy{0.0f};
+    float anisotropy_rotation{0.0f};
     bool double_sided{false};
     bool unlit{false};
     // Indices into CookedModel::textures, -1 when absent.

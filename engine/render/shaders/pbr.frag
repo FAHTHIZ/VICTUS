@@ -184,6 +184,7 @@ layout(set = 3, binding = 1) uniform Material {
     vec4 mapping;        // x: 1 = world-space triplanar mapping (ADR-0197), y: blend sharpness
     vec4 layers;         // x: clear coat strength (ADR-0203), y: clear coat roughness
     vec4 sheen;          // rgb: sheen colour, linear (ADR-0231, KHR_materials_sheen; 0 = none), a: sheen roughness
+    vec4 anisotropy;     // x: anisotropy strength 0..1 (ADR-0232, KHR_materials_anisotropy; 0 = none), y: rotation (radians, from the tangent)
 } material;
 
 // Local reflection probe for this draw (box-projected cube bound to u_env instead of the scene's
@@ -481,6 +482,46 @@ vec3 with_coat(vec3 base_lit, vec3 Nc, vec3 V, vec3 L, vec3 radiance, float coat
     if (coat <= 0.0) return base_lit;
     vec4 k = clear_coat(Nc, V, L, coat, coat_roughness);
     return base_lit * k.a + k.rgb * radiance;
+}
+
+// ---- Anisotropic specular (ADR-0232) ----
+// Brushed metal, hair, satin and machined parts stretch the highlight along one surface direction,
+// as in KHR_materials_anisotropy and Filament: the roughness along the anisotropy direction t is
+// raised to alpha_t = mix(alpha, 1, strength^2) while alpha_b = alpha across it (Burley's
+// anisotropic GGX with the height-correlated anisotropic Smith visibility of Heitz 2014).
+float distribution_ggx_aniso(float NdotH, float TdotH, float BdotH, float at, float ab) {
+    float a2 = at * ab;
+    vec3 v = vec3(ab * TdotH, at * BdotH, a2 * NdotH);
+    float v2 = dot(v, v);
+    float w2 = a2 / max(v2, 1e-7);
+    return a2 * w2 * w2 / PI;
+}
+float visibility_ggx_aniso(float at, float ab, float TdotV, float BdotV, float TdotL, float BdotL, float NdotV, float NdotL) {
+    float lambda_v = NdotL * length(vec3(at * TdotV, ab * BdotV, NdotV));
+    float lambda_l = NdotV * length(vec3(at * TdotL, ab * BdotL, NdotL));
+    return clamp(0.5 / max(lambda_v + lambda_l, 1e-6), 0.0, 1e4);
+}
+// brdf() with the anisotropic lobe; Ta / Ba are the anisotropy direction and its bitangent.
+vec3 brdf_aniso(vec3 N, vec3 V, vec3 L, vec3 radiance, vec3 albedo, float metallic, float roughness, vec3 Ta, vec3 Ba,
+                float aniso) {
+    vec3 H = normalize(V + L);
+    float NdotL = max(dot(N, L), 0.0);
+    float NdotV = max(dot(N, V), 1e-4);
+    float NdotH = max(dot(N, H), 0.0);
+    float a = roughness * roughness;
+    float at = mix(a, 1.0, aniso * aniso), ab = max(a, 1e-3);
+    float D = distribution_ggx_aniso(NdotH, dot(Ta, H), dot(Ba, H), at, ab);
+    float Vis = visibility_ggx_aniso(at, ab, dot(Ta, V), dot(Ba, V), dot(Ta, L), dot(Ba, L), NdotV, NdotL);
+    vec3 f0 = mix(vec3(0.04), albedo, metallic);
+    vec3 F = fresnel_schlick(max(dot(H, V), 0.0), f0);
+    vec3 kd = (1.0 - F) * (1.0 - metallic);
+    return (kd * albedo / PI + D * Vis * F) * radiance * NdotL;
+}
+// The isotropic brdf() when the material has no anisotropy (identical output, same cost).
+vec3 brdf_any(vec3 N, vec3 V, vec3 L, vec3 radiance, vec3 albedo, float metallic, float roughness, vec3 Ta, vec3 Ba,
+              float aniso) {
+    return aniso > 0.0 ? brdf_aniso(N, V, L, radiance, albedo, metallic, roughness, Ta, Ba, aniso)
+                       : brdf(N, V, L, radiance, albedo, metallic, roughness);
 }
 
 // ---- Sheen (ADR-0231) ----
@@ -1017,6 +1058,19 @@ void main() {
     vec3 sheen_color = max(material.sheen.rgb, vec3(0.0));
     float sheen_roughness = clamp(material.sheen.a, 0.07, 1.0);
     float sheen_scale = 1.0 - max3(sheen_color) * sheen_albedo(max(dot(N, V), 1e-4), sheen_roughness);
+    // Anisotropy: the direction is the mesh tangent rotated about the shading normal (meshes
+    // without tangents fall back to the horizontal direction around the normal).
+    float aniso = clamp(material.anisotropy.x, 0.0, 1.0);
+    vec3 Ta = vec3(1.0, 0.0, 0.0), Ba = vec3(0.0, 0.0, 1.0);
+    if (aniso > 0.0) {
+        vec3 t = v_tangent.xyz - N * dot(N, v_tangent.xyz);
+        if (dot(t, t) < 1e-6) t = cross(abs(N.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0), N);
+        t = normalize(t);
+        vec3 b = cross(N, t) * (v_tangent.w < 0.0 ? -1.0 : 1.0);
+        float cr = cos(material.anisotropy.y), sr = sin(material.anisotropy.y);
+        Ta = normalize(t * cr + b * sr);
+        Ba = normalize(cross(N, Ta));
+    }
 
     vec3 L = normalize(-lighting.sun_dir.xyz);
     vec4 lm_texel = v_lightmap.z > 0.5 ? texture(u_lightmap, v_lightmap.xy) : vec4(0.0, 0.0, 0.0, 1.0);
@@ -1031,7 +1085,7 @@ void main() {
     float contact = lighting.camera_pos.w > 1.5 ? screen_occlusion.g : 1.0;
     float sun_visibility = shadow_factor(N, L, baked_sun) * cloud_shadow(L) * contact;
     vec3 sun_radiance = lighting.sun_color.rgb * sun_cookie(v_world_pos);
-    vec3 color = with_coat(with_sheen(brdf(N, V, L, sun_radiance, albedo, metallic, roughness), N, V, L, sun_radiance,
+    vec3 color = with_coat(with_sheen(brdf_any(N, V, L, sun_radiance, albedo, metallic, roughness, Ta, Ba, aniso), N, V, L, sun_radiance,
                                       sheen_color, sheen_roughness, sheen_scale),
                            Nc, V, L, sun_radiance, coat, coat_roughness) * sun_visibility;
 
@@ -1065,7 +1119,7 @@ void main() {
             vec3 radiance = l.color_intensity.rgb * l.color_intensity.w * atten;
             if (l.spot.y < 1.5) radiance *= local_cookie(l, v_world_pos);
             vec3 lit = (l.spot.y < 0.5 && l.spot.x > 0.0) ? sphere_light(N, V, to_light, l.spot.x, radiance, albedo, metallic, roughness)
-                                                          : brdf(N, V, Ld, radiance, albedo, metallic, roughness);
+                                                          : brdf_any(N, V, Ld, radiance, albedo, metallic, roughness, Ta, Ba, aniso);
             lit = with_sheen(lit, N, V, Ld, radiance, sheen_color, sheen_roughness, sheen_scale);
             color += with_coat(lit, Nc, V, Ld, radiance, coat, coat_roughness);
         }
@@ -1093,6 +1147,15 @@ void main() {
     }
     vec2 ab = env_brdf(NdotV, roughness);
     vec3 R = reflect(-V, N);
+    if (aniso > 0.0) {
+        // Bent reflection vector (KHR_materials_anisotropy reference): the environment is sampled
+        // along the normal bent towards the plane across the anisotropy direction, so brushed
+        // metal reflects a streak instead of a sharp image.
+        vec3 bent = normalize(cross(cross(Ba, V), Ba));
+        float k = 1.0 - aniso * (1.0 - roughness);
+        k *= k;
+        R = reflect(-V, normalize(mix(bent, N, k * k)));
+    }
     // Specular occlusion approximation: reflections below the local horizon are dimmed.
     float horizon = clamp(1.0 + dot(R, geometric_n), 0.0, 1.0);
     vec3 env_radiance = env_specular(R, roughness, v_world_pos);

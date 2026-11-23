@@ -306,6 +306,14 @@ void Editor::draw_material_editor() {
             ImGui::SetItemTooltip("Low: a thin bright rim (satin, silk). High: a wide soft haze (velvet, wool)");
             inherit_button(F::SheenRoughness);
         }
+        mark(ImGui::SliderFloat("Anisotropy", &m.anisotropy, 0.0f, 1.0f), F::Anisotropy);
+        ImGui::SetItemTooltip("Stretches highlights along one direction: brushed metal, hair, satin, machined parts");
+        inherit_button(F::Anisotropy);
+        if (m.anisotropy > 0.0f) {
+            mark(ImGui::SliderAngle("Anisotropy Rotation", &m.anisotropy_rotation, -180.0f, 180.0f), F::AnisotropyRotation);
+            ImGui::SetItemTooltip("Turns the stretch direction away from the mesh tangent");
+            inherit_button(F::AnisotropyRotation);
+        }
     }
     if (ImGui::CollapsingHeader("Emission")) {
         mark(color("Emissive", m.emissive, false), F::Emissive);

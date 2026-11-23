@@ -251,6 +251,8 @@ std::vector<std::uint8_t> serialize(const CookedHeader& header, const CookedMode
         w.f32(m.clearcoat_roughness);
         for (float ch : m.sheen_color) w.f32(ch);
         w.f32(m.sheen_roughness);
+        w.f32(m.anisotropy);
+        w.f32(m.anisotropy_rotation);
         w.u8(m.double_sided ? 1 : 0);
         w.u8(m.unlit ? 1 : 0);
         w.i32(m.base_color_texture);
@@ -496,7 +498,7 @@ Result<CookedModel> deserialize_model_impl(std::span<const std::uint8_t> bytes, 
             !r.f32(mat.emissive_strength) || !r.f32(mat.metallic) || !r.f32(mat.roughness) || !r.f32(mat.normal_scale) ||
             !r.f32(mat.alpha_cutoff) || !r.f32(mat.occlusion_strength) || !r.f32(mat.clearcoat) ||
             !r.f32(mat.clearcoat_roughness) || !r.f32(mat.sheen_color[0]) || !r.f32(mat.sheen_color[1]) ||
-            !r.f32(mat.sheen_color[2]) || !r.f32(mat.sheen_roughness) || !r.boolean(mat.double_sided) || !r.boolean(mat.unlit) ||
+            !r.f32(mat.sheen_color[2]) || !r.f32(mat.sheen_roughness) || !r.f32(mat.anisotropy) || !r.f32(mat.anisotropy_rotation) || !r.boolean(mat.double_sided) || !r.boolean(mat.unlit) ||
             !r.i32(mat.base_color_texture) || !r.i32(mat.metallic_roughness_texture) || !r.i32(mat.normal_texture) ||
             !r.i32(mat.emissive_texture))
             return corrupt("material");
