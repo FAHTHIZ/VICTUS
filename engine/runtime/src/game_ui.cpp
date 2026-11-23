@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
+#include <cstdint>
 #include <span>
 
 namespace victus::runtime {
@@ -200,7 +201,7 @@ const text::Layout& GameUiRenderer::layout_for(const gameui::DrawItem& d, GameUi
     std::string key;
     key.reserve(d.text.size() + 32);
     const text::FontStack& regular = stack_for(d, d.bold, stats);
-    append_bytes(key, &regular);
+    append_bytes(key, reinterpret_cast<std::uintptr_t>(&regular)); // font stack identity
     append_bytes(key, opt.size);
     append_bytes(key, opt.wrap_width);
     append_bytes(key, opt.direction);

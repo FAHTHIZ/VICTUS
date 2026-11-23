@@ -102,14 +102,13 @@ std::vector<Quat> rotations(Rig& r, std::size_t i, const std::vector<std::string
 
 TEST_CASE("skeleton lod: detail nodes are tagged by role on Orion, the face morphs and the reference rigs") {
     const animation::AnimationSet set = make_animation_set(orion_model());
-    std::size_t detail = 0, morphs = 0, joints = 0;
+    std::size_t morphs = 0, joints = 0;
     auto lod_of = [&](std::string_view name) {
         for (const auto& n : set.nodes)
             if (n.name == name) return static_cast<int>(n.lod);
         return -1;
     };
     for (const auto& n : set.nodes) {
-        detail += n.lod;
         if (n.is_morph())
             morphs += n.lod;
         else
