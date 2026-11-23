@@ -5,6 +5,7 @@
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/project/project.hpp"
 #include "victus/project/starter_materials.hpp"
+#include "victus/procgen/tree.hpp"
 #include "victus/assets/material.hpp"
 #include "victus/core/json.hpp"
 #include "victus/audio/audio.hpp"
@@ -1430,4 +1431,50 @@ TEST_CASE("project: script_api is stamped on new projects, defaults to 1.0 and i
     CHECK_FALSE(script::check_api_requirement(newer->settings().script_api).ok());
     std::error_code ec;
     sfs::remove_all(dir, ec);
+}
+
+TEST_CASE("templates: open-sky 3D templates surround the play area with swaying trees (ADR-0243)") {
+    project::register_components();
+    for (const char* id : {"3d", "multiplayer"}) {
+        CAPTURE(id);
+        const auto files = project::template_files(id);
+        const auto find = [&](std::string_view path) -> const project::TemplateFile* {
+            for (const auto& f : files)
+                if (f.path == path) return &f;
+            return nullptr;
+        };
+        const auto* shader = find(project::kFoliageWindShaderPath);
+        REQUIRE(shader);
+        CHECK(shader->content.find("void vertex(VertexInput i, inout Vertex v)") != std::string::npos);
+        REQUIRE(find(std::string(project::kFoliageWindShaderPath) + ".meta"));
+        for (const char* name : {"leaves", "bark"}) {
+            const auto* vmat = find(std::string("assets/materials/starter/") + name + ".vmat");
+            REQUIRE(vmat);
+            auto mat = assets::MaterialAsset::from_json(*json::parse(vmat->content));
+            REQUIRE(mat.ok());
+            CHECK_FALSE(mat->shader.is_nil());
+            CHECK(mat->shader_params[0].w > 0.0f); // bend strength
+        }
+        scene::Scene s;
+        REQUIRE(project::build_template_scene(id, s).ok());
+        int trees = 0, conifers = 0;
+        s.world().each<procgen::TreeComponent>([&](scene::Entity e, procgen::TreeComponent& t) {
+            ++trees;
+            if (t.kind == procgen::TreeKind::Conifer) ++conifers;
+            CHECK(t.leaf_material == project::starter_leaves_uuid());
+            CHECK(t.bark_material == project::starter_bark_uuid());
+            const math::Vec3 p = s.world().get<scene::Transform>(e)->position;
+            CHECK(std::max(std::abs(p.x), std::abs(p.z)) > 12.0f); // off the play area
+        });
+        CHECK(trees >= 16);
+        CHECK(conifers > 0);
+        CHECK(conifers < trees);
+        // Generated on demand, never saved: the saved scene has no tree meshes.
+        CHECK(procgen::build_trees(s) == static_cast<std::uint32_t>(trees));
+        scene::Scene copy;
+        REQUIRE(copy.load(s.save()).ok());
+        std::size_t meshes = 0;
+        copy.world().each<scene::ProceduralMeshComponent>([&](scene::ProceduralMeshComponent&) { ++meshes; });
+        CHECK(meshes == 0);
+    }
 }

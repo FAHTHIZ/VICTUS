@@ -2670,3 +2670,31 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 **Evidence:** `victus_editor_tests -tc="*New Scene keeps*"`; STATUS.md entry for the commit.
 
 **Consequences:** New scenes in 3D, no-code 3D and multiplayer projects start with the same sky, exposure, fog and ambient occlusion as the templates. Other projects get the pre-ADR-0237 sun.
+
+### ADR-0243: Procedural trees and foliage wind for the open-sky templates
+
+**Status:** Accepted (2026-11-23). Eighth item of the look pass.
+
+**Context:** The open-sky 3D templates were a paved square on a meadow running to a fogged horizon: right sky, light and fog, but nothing between the play area and the horizon to give depth, scale or motion. Most of what makes an Unreal level look "complete" right away is vegetation painted from a library of wind-ready plants (SimpleGrassWind-style vertex offsets). VICTUS had foliage scattering on terrain (ADR-0157) and project vertex functions in every pass (ADR-0170), but no plants to scatter and no wind. Shipping scanned plants would add tens of megabytes and alpha-tested overdraw, expensive on the software and mobile renderers.
+
+**Decision:**
+- `procgen::TreeComponent` (reflected as `Tree`) generates a seeded broadleaf (a curved, flared trunk with branches up into six to eight noise-displaced leaf masses) or conifer (a tapered trunk with five or six drooping, zig-zag-edged skirts). The trees use vertex colours and no textures, with about 2,000 to 2,800 triangles each. The crown's normals lean towards the direction from the crown centre, so it shades as one soft volume, darker underneath and inside. `procgen::build_trees` regenerates the trunk and crown as transient `ProceduralMeshComponent` children whenever a hash of the settings changes. It runs in the `procgen.update` system (play and player) and in Studio's edit-mode frame, so trees show while editing. They are never saved.
+- Starter foliage materials (`project::starter_leaves_uuid`, `starter_bark_uuid`) use one vertex-function shader, `assets/shaders/starter/foliage_wind.vshader`:
+  - A bend along the wind direction that grows with the square of the height above the object origin, with slow gusts and a faster sway, phased by the object position.
+  - A small length-preserving drop.
+  - A per-vertex leaf flutter along the normal.
+  - Parameters: `params[0]` direction and strength, `params[1]` gust speed, flutter and flutter speed.
+  - Bark uses the same bend without flutter, so trunk and crown stay joined. Leaves get subsurface transmission (ADR-0233).
+- The 3D and multiplayer templates place 22 trees (about 30 % conifers) on the meadow, deterministically, starting 13-15 m from the centre. The wedge in front of the camera is kept clear up to 26 m.
+
+**Alternatives:**
+- Scanned CC0 plants with alpha cards: much heavier downloads and overdraw on lavapipe and GLES.
+- Precompiled wind variants of the built-in vertex shaders: duplicates every pass's shader for one effect, while the vertex-function path already covers camera, shadow and lightmap variants.
+- CPU-animated vertices: per-frame uploads.
+
+**Evidence:** `victus_procgen_tests -tc="trees*"`, `victus_gpu_tests -tc="gpu trees*"`, `victus_project_tests -tc="*swaying trees*"`; STATUS.md entry for the commit.
+
+**Consequences:**
+- New 3D and multiplayer projects open with a treeline that moves in the wind and casts moving shadows.
+- Vertex-function materials still have no depth prepass or motion vectors (ADR-0170). Under TAA the moving leaves resolve from history without reprojection. At this sway amplitude (about 0.15 m at the crown) this is soft rather than ghosting. Motion vectors for them are the next item.
+- Existing projects get trees by adding a `Tree` component; the materials come with new projects.

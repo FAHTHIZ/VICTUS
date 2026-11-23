@@ -9,6 +9,7 @@
 #include "victus/gameplay/framework.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/platform/platform.hpp"
+#include "victus/procgen/tree.hpp"
 #include "victus/scene/reflect.hpp"
 
 #include <imgui.h>
@@ -474,6 +475,7 @@ void Editor::frame(float dt) {
         if (edit_sprites_) edit_sprites_->update_sprites(active_scene(), 0); // frame preview
         if (terrains_) terrains_->update(active_scene());                   // terrain chunks in edit mode
         if (tilemaps_) tilemaps_->update(active_scene());                   // tile sets for drawing
+        (void)procgen::build_trees(active_scene());                         // tree meshes (ADR-0243)
     }
     if (!stopped) {
         update_graph_debug(dt);

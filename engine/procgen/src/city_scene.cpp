@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // City component, generation into a scene, and pedestrians (ADR-0202).
 #include "victus/procgen/city.hpp"
+#include "victus/procgen/tree.hpp"
 
 #include "victus/animation/crowd.hpp"
 #include "victus/core/log.hpp"
@@ -98,6 +99,7 @@ void register_components() {
             .field(&PedestrianComponent::enabled, "enabled")
             .commit();
     });
+    register_tree_components();
     animation::register_components();
     physics::register_components();
     traffic::register_components();
@@ -304,6 +306,7 @@ void add_procgen_systems(gameplay::Simulation& sim) {
     register_components();
     sim.add_system("procgen.update", gameplay::Phase::Update, [](scene::Scene& s, const gameplay::FrameTime& t) {
         if (s.world().count<CityComponent>() > 0) (void)build_city(s);
+        (void)build_trees(s);
         if (gameplay::game_paused(s)) return;
         update_pedestrians(s, t.dt);
     });

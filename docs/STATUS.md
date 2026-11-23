@@ -3688,4 +3688,44 @@ Built:
 Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, Xvfb + lavapipe):
 - The new test passes: in a 3D project one Environment with the starter sky, exposure 0.6, sky fog and no lightmap, sun 5, no ground or backdrop, 0 % clipped pixels in the viewport; in a 2D project no Environment and sun 3. With the old behaviour forced (Environment dropped, sun kept), 5 of its checks fail.
 - `victus_editor_tests` (whole binary): 84 cases, 6449 assertions passed.
-- Next task: foliage wind.
+- Next task: foliage wind (done in ADR-0243).
+
+## 2026-11-23 — Procedural trees and foliage wind (ADR-0243)
+
+Built:
+- `procgen::TreeComponent` (`Tree`, World category) and `procgen::build_tree_meshes` / `build_trees` (engine/procgen/src/tree.cpp).
+  - Seeded broadleaf: a curved, flared trunk with branches and six to eight noise-displaced leaf masses with crown-centred normals.
+  - Seeded conifer: drooping zig-zag skirts.
+  - Trees rebuild as two transient meshes (trunk, crown) when their settings hash changes, in `procgen.update` and in Studio's edit-mode frame.
+- Starter foliage: `assets/shaders/starter/foliage_wind.vshader` and the `leaves.vmat` and `bark.vmat` materials, written by `project::add_starter_material_files`.
+  - The vertex function applies a height-squared bend with gusts and sway, phased by object position, plus leaf flutter.
+  - Leaves get subsurface transmission.
+- The 3D and multiplayer templates have 22 trees on the meadow around the play area.
+- Tests:
+  - `trees: broadleaf and conifer meshes are deterministic, outward-facing and within budget (ADR-0243)`
+  - `trees: TreeComponent builds transient trunk and crown meshes and rebuilds on change (ADR-0243)`
+  - `gpu trees: starter foliage wind sways the crown over time, zero wind holds still (ADR-0243)`
+  - `templates: open-sky 3D templates surround the play area with swaying trees (ADR-0243)`
+- Editor tests that count entities across autosave, recovery, reopen and undo now count saved (non-transient) entities.
+- Perf budgets re-baselined for template-3d and template-multiplayer.
+
+Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, Xvfb + lavapipe):
+- `victus_procgen_tests`: 7 cases passed.
+  - The winding check caught inside-out trunks and broadleaf crowns in the first version: 0 % and 1.7 % of triangles facing outward. After the fix it passes the 97 % threshold.
+  - Broadleaf 2,764 triangles, conifer 296.
+- `gpu trees`:
+  - 1,295 green crown pixels at 160x120.
+  - With wind, 94 pixels change between t = 0 s and 2.3 s (threshold 40).
+  - With bend and flutter set to 0, 0 pixels change.
+  - The existing surface-shader vertex tests pass.
+- `victus_project_tests -tc="templates*"`: 14 cases, 1673 assertions passed.
+- Template renders at 1280x720 (3D) and 960x540 (multiplayer) reviewed: a treeline of broadleaves and conifers on the meadow, fading into the sky fog, with ground shadows and none on the play area.
+- Full `VICTUS_REQUIRE_GPU=1 ctest -j2 -E perf_budgets`: 46/47 passed.
+  - Only `victus_editor_tests` failed: the entity-count checks fixed above, plus one SIGSEGV in `studio skeleton: a twist corrective is baked...`.
+  - That case passes alone and in its group. A whole-binary run afterwards passed 83/84, with the crash not reproduced and the only failure the area-light undo count, since fixed.
+  - The fixed cases pass: `editor: 3D project workflow end to end`, autosave, fatal-error autosave, and area light.
+- `perf_budgets` (alone):
+  - Frame p95: template-3d 267 ms (ceiling 400), multiplayer 246 ms (ceiling 350).
+  - Counters re-baselined: template-3d 60,312 triangles and 19 surface-shader draws; multiplayer 124 draw calls.
+- clang-tidy: 0 diagnostics in tree.cpp, panels.cpp, city_scene.cpp, starter_materials.cpp and templates.cpp.
+- Next task: motion vectors and a depth prepass for vertex-function materials, so swaying foliage reprojects under TAA.

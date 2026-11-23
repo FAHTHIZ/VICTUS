@@ -189,6 +189,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_effect_fog_tests.cpp
         render/gpu_light2d_tests.cpp
         render/gpu_city_tests.cpp
+        render/gpu_tree_tests.cpp
         render/gpu_rig_deformation_tests.cpp
         render/gpu_corrective_tests.cpp
         render/gpu_expression_tests.cpp
@@ -476,6 +477,6 @@ victus_add_test(victus_traffic_tests
     LABELS traffic)
 
 victus_add_test(victus_procgen_tests
-    SOURCES procgen/city_tests.cpp
+    SOURCES procgen/city_tests.cpp procgen/tree_tests.cpp
     DEPS VICTUS::Procgen VICTUS::Traffic VICTUS::Animation VICTUS::Physics VICTUS::Scene VICTUS::Core
     LABELS procgen)

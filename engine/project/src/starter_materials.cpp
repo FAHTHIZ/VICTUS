@@ -72,6 +72,36 @@ const std::array<SetData, static_cast<std::size_t>(StarterMaterial::Count)>& set
 #undef VICTUS_STARTER_BYTES
 
 constexpr std::string_view kSkyUuid = "79c5cde0-59c5-42b1-8c8f-69f900975ee9";
+constexpr std::string_view kWindShaderUuid = "a3e1f0c2-6b7d-4e58-9c14-2f8b5d7e0a31";
+constexpr std::string_view kLeavesUuid = "a3e1f0c2-6b7d-4e58-9c14-2f8b5d7e0a32";
+constexpr std::string_view kBarkUuid = "a3e1f0c2-6b7d-4e58-9c14-2f8b5d7e0a33";
+
+// Wind for vertex-coloured foliage (ADR-0243), after the usual real-time recipe (a height-weighted
+// bend of the whole plant plus a small per-vertex flutter): the bend grows with the square of the
+// height above the object's origin so the base stays planted, and its phase comes from the
+// object's position so neighbouring trees do not sway in lockstep. Runs in the camera and shadow
+// passes alike, so shadows move with the leaves.
+constexpr std::string_view kWindShader = R"(// Foliage wind (used by materials/starter/leaves.vmat and bark.vmat, ADR-0243).
+// params[0] = wind direction (xyz, world) + bend strength (w, m of sway at 10 m height)
+// params[1] = x gust speed, y leaf flutter (m), z flutter speed
+void vertex(VertexInput i, inout Vertex v) {
+    float h = max(i.position.y, 0.0);
+    vec3 dir = i.params[0].xyz;
+    dir = normalize(vec3(dir.x, 0.0, dir.z) + vec3(1e-4, 0.0, 0.0));
+    float phase = dot(i.object_origin.xz, vec2(0.21, 0.17));
+    float t = i.time * i.params[1].x + phase;
+    // Slow gusts that never die out completely, plus a quicker back-and-forth sway.
+    float gust = 0.55 + 0.45 * sin(t * 0.43 + 1.1) * sin(t * 0.17 + 2.3);
+    float sway = 0.35 * sin(t * 1.9) + 0.15 * sin(t * 3.1 + 0.7);
+    float bend = i.params[0].w * (h * h) * 0.01 * (gust + sway * gust);
+    v.world_position += dir * bend;
+    v.world_position.y -= 0.15 * abs(bend) * bend / max(h, 0.5); // keep the length while bending
+    // Leaf flutter: small, fast, varying across the crown, scaled up away from the trunk base.
+    vec3 w = v.world_position;
+    float f = sin(i.time * i.params[1].z + dot(w, vec3(1.7, 2.3, 1.3))) * sin(i.time * i.params[1].z * 0.63 + dot(w, vec3(-2.1, 0.9, 1.9)));
+    v.world_position += v.normal * (f * i.params[1].y * clamp(h * 0.3, 0.0, 1.0));
+}
+)";
 
 Uuid parse(std::string_view text) {
     Uuid u;
@@ -111,6 +141,8 @@ const StarterMaterialInfo& starter_material(StarterMaterial m) noexcept {
 Uuid starter_material_uuid(StarterMaterial m) noexcept { return parse(starter_material(m).material_uuid); }
 
 Uuid starter_sky_uuid() noexcept { return parse(kSkyUuid); }
+Uuid starter_leaves_uuid() noexcept { return parse(kLeavesUuid); }
+Uuid starter_bark_uuid() noexcept { return parse(kBarkUuid); }
 
 void add_starter_material_files(std::vector<TemplateFile>& files) {
     static constexpr std::array<std::string_view, 3> kSuffix = {"_color.jpg", "_normal.jpg", "_orm.jpg"};
@@ -138,6 +170,26 @@ void add_starter_material_files(std::vector<TemplateFile>& files) {
         files.push_back({std::string(set.info.material_path), json::stringify(m.to_json(), true) + "\n"});
         files.push_back({std::string(set.info.material_path) + ".meta", plain_meta(set.info.material_uuid)});
     }
+    // Foliage (ADR-0243): white base colours so the tree meshes' vertex colours show through.
+    files.push_back({std::string(kFoliageWindShaderPath), std::string(kWindShader)});
+    files.push_back({std::string(kFoliageWindShaderPath) + ".meta", plain_meta(kWindShaderUuid)});
+    const auto foliage = [&](std::string_view name, std::string_view uuid, float roughness, float flutter, bool leaves) {
+        assets::MaterialAsset m;
+        m.base_color = {1, 1, 1, 1};
+        m.roughness = roughness;
+        m.shader = parse(kWindShaderUuid);
+        m.shader_params[0] = {1.0f, 0.0f, 0.35f, 0.35f};
+        m.shader_params[1] = {0.9f, flutter, 5.0f, 0.0f};
+        if (leaves) {
+            m.subsurface_color = {0.32f, 0.42f, 0.08f}; // sunlight glowing through the leaves
+            m.subsurface_thickness = 0.35f;
+        }
+        const std::string path = "assets/materials/starter/" + std::string(name) + ".vmat";
+        files.push_back({path, json::stringify(m.to_json(), true) + "\n"});
+        files.push_back({path + ".meta", plain_meta(uuid)});
+    };
+    foliage("leaves", kLeavesUuid, 0.7f, 0.035f, true);
+    foliage("bark", kBarkUuid, 0.92f, 0.0f, false);
     files.push_back({std::string(kStarterSkyPath), to_string(embedded::kStarter_partly_cloudy_hdr())});
     files.push_back({std::string(kStarterSkyPath) + ".meta", texture_meta(kSkyUuid, false)});
 }

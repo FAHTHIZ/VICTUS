@@ -31,6 +31,14 @@ inline constexpr std::string_view kStarterSkyPath = "assets/textures/sky/partly_
 // The HDR sky's texture UUID, for EnvironmentComponent::environment_map.
 [[nodiscard]] Uuid starter_sky_uuid() noexcept;
 
+// Foliage materials (ADR-0243) for procgen::TreeComponent: vertex-coloured leaves and bark that
+// sway in the wind through assets/shaders/starter/foliage_wind.vshader (a vertex function, so
+// shadows move with the leaves). Material shader_params: [0] = wind direction (xyz) + bend
+// strength (w), [1] = x gust speed, y leaf flutter (m), z flutter speed.
+inline constexpr std::string_view kFoliageWindShaderPath = "assets/shaders/starter/foliage_wind.vshader";
+[[nodiscard]] Uuid starter_leaves_uuid() noexcept;
+[[nodiscard]] Uuid starter_bark_uuid() noexcept;
+
 // Appends every starter texture, material and the sky (with their .meta files) to `files`.
 void add_starter_material_files(std::vector<TemplateFile>& files);
 

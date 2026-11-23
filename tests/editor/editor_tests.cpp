@@ -44,6 +44,10 @@ sfs::path temp_dir(const char* tag) {
 }
 } // namespace
 
+// Entities that are saved with the scene: generated content (tree meshes, ADR-0243) is rebuilt
+// on the next frame and not part of what is autosaved or recovered.
+static std::size_t saved_entities(scene::Scene& s) { return s.world().alive_count() - s.world().count<scene::TransientComponent>(); }
+
 TEST_CASE("undo: property edit, create, delete subtree, reparent, dirty tracking") {
     Scene s;
     const Entity a = s.create("A");
@@ -350,9 +354,9 @@ TEST_CASE("editor: 3D project workflow end to end") {
     // Save and reopen: the edits persist and the scene is clean.
     REQUIRE(h.ed->save_scene().ok());
     CHECK_FALSE(h.ed->dirty());
-    const std::size_t saved_size = s.size();
+    const std::size_t saved_size = saved_entities(s);
     REQUIRE(h.ed->open_project(h.dir / "Game").ok());
-    CHECK(h.ed->edit_scene().size() == saved_size);
+    CHECK(saved_entities(h.ed->edit_scene()) == saved_size);
     CHECK_FALSE(h.ed->edit_scene().find(cube_id).is_null());
     h.frames(1);
 }
@@ -1930,7 +1934,7 @@ TEST_CASE("editor: a fatal error (GPU device lost) autosaves unsaved edits for r
     CHECK(h.ed->save_for_fatal_error("GPU device lost: test") == "no unsaved edits");
     CHECK_FALSE(std::filesystem::exists(copy));
 
-    const std::size_t base = h.ed->edit_scene().world().alive_count();
+    const std::size_t base = saved_entities(h.ed->edit_scene());
     (void)h.ed->create_entity(editor::Primitive::Cube);
     REQUIRE(h.ed->dirty());
     const std::string summary = h.ed->save_for_fatal_error("GPU device lost: test");
@@ -1943,7 +1947,7 @@ TEST_CASE("editor: a fatal error (GPU device lost) autosaves unsaved edits for r
     REQUIRE(h.ed->open_project(h.dir / "Fatal").ok());
     REQUIRE(h.ed->recovery_available());
     REQUIRE(h.ed->recover_autosave().ok());
-    CHECK(h.ed->edit_scene().world().alive_count() == base + 1);
+    CHECK(saved_entities(h.ed->edit_scene()) == base + 1);
 }
 
 TEST_CASE("editor: unsaved edits are autosaved and recovered after a crash") {
@@ -1956,7 +1960,7 @@ TEST_CASE("editor: unsaved edits are autosaved and recovered after a crash") {
     const std::string scene = h.ed->scene_path();
     const auto copy = h.ed->autosave_path(scene);
     CHECK(copy.parent_path() == h.ed->project()->root() / ".victus" / "autosave");
-    const std::size_t base = h.ed->edit_scene().world().alive_count();
+    const std::size_t base = saved_entities(h.ed->edit_scene());
     CHECK_FALSE(h.ed->recovery_available());
 
     // Not dirty: nothing is written; dirty: written after the interval.
@@ -1987,10 +1991,10 @@ TEST_CASE("editor: unsaved edits are autosaved and recovered after a crash") {
     REQUIRE(h.ed->recovery_available());
     CHECK(h.ed->recovery_scene() == scene);
     h.frames(2); // the recovery prompt is shown
-    CHECK(h.ed->edit_scene().world().alive_count() == base);
+    CHECK(saved_entities(h.ed->edit_scene()) == base);
     REQUIRE(h.ed->recover_autosave().ok());
     CHECK_FALSE(h.ed->recovery_available());
-    CHECK(h.ed->edit_scene().world().alive_count() == base + 1);
+    CHECK(saved_entities(h.ed->edit_scene()) == base + 1);
     CHECK(h.ed->dirty());
     CHECK(std::filesystem::exists(copy)); // kept until saved or discarded
     REQUIRE(h.ed->save_scene().ok());
@@ -2007,7 +2011,7 @@ TEST_CASE("editor: unsaved edits are autosaved and recovered after a crash") {
     h.ed->discard_autosave();
     CHECK_FALSE(h.ed->recovery_available());
     CHECK_FALSE(std::filesystem::exists(copy));
-    CHECK(h.ed->edit_scene().world().alive_count() == base + 1);
+    CHECK(saved_entities(h.ed->edit_scene()) == base + 1);
 
     // A copy older than the scene file (saved later elsewhere) is ignored and removed.
     (void)h.ed->create_entity(editor::Primitive::Cube);

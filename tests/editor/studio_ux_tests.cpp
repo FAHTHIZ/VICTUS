@@ -2736,9 +2736,9 @@ TEST_CASE("studio area light: create from the command palette, edit in the Inspe
     const sfs::path root = h.dir / "Area Game";
     REQUIRE(h.ed->create_project(root, "Area Game", "3d").ok());
     auto& w = h.ed->edit_scene().world();
-    const std::size_t before = w.alive_count();
+    const std::size_t before = (w.alive_count() - w.count<scene::TransientComponent>());
     CHECK(h.ed->run_command("Entity: Create Area Light"));
-    CHECK(w.alive_count() == before + 1);
+    CHECK((w.alive_count() - w.count<scene::TransientComponent>()) == before + 1);
     const scene::Entity panel = h.ed->selected(); // new entities are selected
     REQUIRE_FALSE(panel.is_null());
     const auto* l = w.get<scene::LightComponent>(panel);
@@ -2760,5 +2760,5 @@ TEST_CASE("studio area light: create from the command palette, edit in the Inspe
     h.frames(3);
     CHECK(w.get<scene::LightComponent>(panel)->cookie == cookie);
     CHECK(h.ed->run_command("Edit: Undo"));
-    CHECK(w.alive_count() == before);
+    CHECK((w.alive_count() - w.count<scene::TransientComponent>()) == before);
 }

@@ -6,6 +6,7 @@
 #include "victus/render/image.hpp"
 #include "victus/ai/ai.hpp"
 #include "victus/procgen/city.hpp"
+#include "victus/procgen/tree.hpp"
 #include "victus/traffic/traffic.hpp"
 #include "victus/sequencer/sequencer.hpp"
 #include "victus/navigation/navigation.hpp"
@@ -351,6 +352,47 @@ void backdrop(Scene& s) {
     m.cast_shadows = false;
 }
 
+// A loose ring of procedural trees (ADR-0243) on the meadow outside the play area: broadleaves
+// with a few conifers, varied in size and colour, swaying in the wind through the starter
+// foliage materials. They give the open sky templates depth, scale and moving shadows. The
+// wedge in front of the camera (towards +Z) is kept clear up to 26 m so the follow camera never
+// ends up inside a crown. Deterministic: the same layout every time.
+void scenery_trees(Scene& s, float inner, std::uint32_t seed) {
+    const Entity root = add(s, "Trees", {0, 0, 0});
+    const auto unit = [&](std::uint32_t i) {
+        std::uint32_t x = seed * 0x9E3779B1u + i * 0x85EBCA77u;
+        x ^= x >> 16;
+        x *= 0x7feb352du;
+        x ^= x >> 15;
+        x *= 0x846ca68bu;
+        return static_cast<float>((x ^ (x >> 16)) >> 8) / 16777216.0f;
+    };
+    constexpr int kTrees = 22;
+    int placed = 0;
+    for (int k = 0; k < 64 && placed < kTrees; ++k) {
+        const auto i = static_cast<std::uint32_t>(k);
+        const float a = 2.39996323f * static_cast<float>(k) + 0.4f * unit(i * 4u);
+        const float r = inner + 2.0f + 24.0f * std::sqrt(unit(i * 4u + 1u));
+        const math::Vec3 p{std::sin(a) * r, 0.0f, std::cos(a) * r};
+        if (p.z > 0.0f && std::abs(p.x) < 0.6f * p.z + 4.0f && r < 26.0f) continue; // camera side
+        const bool conifer = unit(i * 4u + 2u) < 0.3f;
+        const float size = 0.8f + 0.45f * unit(i * 4u + 3u);
+        const Entity e = add(s, "Tree " + std::to_string(placed + 1), p, root);
+        s.world().get<Transform>(e)->rotation = math::Quat::euler(0, unit(i * 7u) * 6.2831853f, 0);
+        auto& t = s.world().add<procgen::TreeComponent>(e);
+        t.seed = 101u + i;
+        t.kind = conifer ? procgen::TreeKind::Conifer : procgen::TreeKind::Broadleaf;
+        t.height = (conifer ? 8.5f : 6.5f) * size;
+        t.crown_radius = (conifer ? 2.2f : 2.8f) * size;
+        const float v = unit(i * 5u);
+        t.leaf_color = conifer ? math::Color{0.16f + 0.04f * v, 0.3f + 0.05f * v, 0.15f, 1}
+                               : math::Color{0.28f + 0.12f * v, 0.44f + 0.06f * v, 0.16f + 0.02f * v, 1};
+        t.leaf_material = starter_leaves_uuid();
+        t.bark_material = starter_bark_uuid();
+        ++placed;
+    }
+}
+
 // ---- In-game UI (HUD) ---------------------------------------------------------------------------
 
 Entity ui_rect(Scene& s, Entity parent, std::string_view name, math::Vec2 anchor, math::Vec2 pivot, math::Vec2 pos,
@@ -471,6 +513,7 @@ void build_3d(Scene& s, const TemplateOptions& options) {
         gm.lightmapped = true;
     }
     backdrop(s);
+    scenery_trees(s, 11.0f, 3u);
     {
         s.world().add<physics::RigidBodyComponent>(ground).type = physics::BodyType::Static;
         auto& c = s.world().add<physics::ColliderComponent>(ground);
@@ -741,6 +784,7 @@ void build_multiplayer(Scene& s, const TemplateOptions& options) {
         gm.lightmapped = true; // baked on creation (ADR-0134)
     }
     backdrop(s);
+    scenery_trees(s, 13.0f, 7u);
     {
         s.world().add<physics::RigidBodyComponent>(ground).type = physics::BodyType::Static;
         auto& c = s.world().add<physics::ColliderComponent>(ground);
