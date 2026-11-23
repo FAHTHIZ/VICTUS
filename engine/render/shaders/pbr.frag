@@ -1238,16 +1238,21 @@ void main() {
     color += ambient;
     color += s.emissive;
 
-    int fog_mode = int(lighting.fog_color.w + 0.5);
+    int fog_raw = int(lighting.fog_color.w + 0.5);
+    int fog_mode = fog_raw & 3;
     if (fog_mode > 0) {
-        float d = length(v_world_pos - lighting.camera_pos.xyz);
+        vec3 fog_ray = v_world_pos - lighting.camera_pos.xyz;
+        float d = length(fog_ray);
         float f;
         if (fog_mode == 1) f = clamp((d - lighting.fog_params.x) / max(lighting.fog_params.y - lighting.fog_params.x, 1e-3), 0.0, 1.0);
         else {
             float k = max(d - lighting.fog_params.x, 0.0) * lighting.fog_params.z;
             f = fog_mode == 2 ? 1.0 - exp(-k) : 1.0 - exp(-k * k);
         }
-        color = mix(color, lighting.fog_color.rgb, f * lighting.fog_params.w);
+        vec3 fog_rgb = lighting.fog_color.rgb;
+        // Sky-coloured fog (ADR-0239): the blurred environment behind the fragment, tinted.
+        if (fog_raw >= 4) fog_rgb *= textureLod(u_env, env_rotate(fog_ray / max(d, 1e-4)), 0.5 * lighting.env_params.y).rgb;
+        color = mix(color, fog_rgb, f * lighting.fog_params.w);
     }
     out_color = vec4(blended_fog(color), s.alpha);
     if (lighting.screen.w > 0.0) out_color.rgb = hdr_quantize(out_color.rgb, lighting.screen.w);

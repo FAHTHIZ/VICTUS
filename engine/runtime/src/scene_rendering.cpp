@@ -1430,6 +1430,7 @@ void apply_environment(const gameplay::EnvironmentComponent& e, render::Environm
     env.fog_end = std::max(e.fog_end, env.fog_start);
     env.fog_density = std::max(e.fog_density, 0.0f);
     env.fog_max_opacity = std::clamp(e.fog_max_opacity, 0.0f, 1.0f);
+    env.fog_from_environment = e.fog_from_sky;
     env.coverage_amount = std::clamp(e.coverage_amount, 0.0f, 1.0f);
     env.coverage_color = e.coverage_color;
     env.coverage_roughness = e.coverage_roughness;

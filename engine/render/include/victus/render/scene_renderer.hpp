@@ -542,6 +542,9 @@ struct Environment {
     float fog_end{400.0f};     // linear: full fog at this distance
     float fog_density{0.004f}; // exponential modes, per metre
     float fog_max_opacity{1.0f};
+    // With an environment map: the fog radiance is the blurred environment along the view ray
+    // times fog_color (a tint) and environment_intensity, so distant geometry fades into the sky (ADR-0239).
+    bool fog_from_environment{false};
     // Coverage layer (snow, dust, ash...) on upward-facing surfaces: 0 = none .. 1 = full.
     float coverage_amount{0.0f};
     math::Color coverage_color{0.86f, 0.89f, 0.95f, 1}; // linear albedo

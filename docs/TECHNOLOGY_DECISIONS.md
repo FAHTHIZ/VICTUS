@@ -2614,3 +2614,17 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 **Evidence:** STATUS.md entry for the commit.
 
 **Consequences:** The lava pool reads as molten under the bright template sun and blooms. About 14 value-noise evaluations per lava pixel; only the lava plane pays it.
+
+### ADR-0239: Sky-coloured distance fog and a horizon backdrop in the HDR-sky templates
+
+**Status:** Accepted (2026-11-23). Fourth item of the look pass.
+
+**Context:** The 3D and multiplayer templates' 20-24 m paving ended in a hard line against the sky, and the no-code 3D lava plane's far edge was visible; nothing gave distance any aerial perspective, one of the main cues that make an Unreal or Godot default scene read as a world rather than a model on a table. The existing distance fog used one constant colour: matched to an HDR sky it was right in one direction only, and it was scaled by `ambient_intensity`, which HDR scenes do not use. Unreal's Exponential Height Fog offers "Inscattering Texture" (fog radiance from a cubemap along the view ray), and Frostbite and Godot (`fog_sky_affect`) tint fog from the sky for the same reason.
+
+**Decision:** `render::Environment::fog_from_environment` (component field `fog_from_sky`): with an environment map, pbr.frag's fog radiance is the prefiltered environment at half the mip chain along the view ray, rotated with the sky, times `fog_color` (a tint) and `environment_intensity`. It is signalled as fog mode + 4 in the existing `fog_color.w`, so no uniform layout changes; particles, precipitation and water receive the plain mode with the sky's average horizon radiance (SH9 evaluated at four horizontal directions) times the tint. The HDR-sky templates use exponential-squared fog (density 0.016, start 12-20 m) with `fog_from_sky`, and the 3D and multiplayer templates add a 400 m grass `Backdrop` plane (not lightmapped, no collider, no shadow casting) 2 cm under the play area; the no-code 3D lava grows from 90 m to 400 m.
+
+**Alternatives:** (1) Height fog with in-scattering from the sun: more code, and the volumetric fog (ADR-0098) already exists for that look. (2) A skirt mesh that fades to transparent: sorting and a visible band where it meets the sky. (3) Larger lightmapped ground: a 400 m plane would waste the lightmap atlas.
+
+**Evidence:** STATUS.md entry for the commit.
+
+**Consequences:** Template scenes run to a soft horizon. One extra texture fetch per fogged opaque pixel when the option is on. Existing scenes are unchanged (the option defaults off and modes 0-3 decode as before).

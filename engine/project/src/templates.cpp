@@ -331,6 +331,26 @@ void sun(Scene& s, float intensity = 3.0f, math::Vec3 direction = {-0.4f, -1.0f,
 void hdr_sky_sun(Scene& s) { sun(s, 5.0f, {0.6275f, -0.5736f, -0.5265f}); }
 constexpr float kHdrSkyExposure = 0.6f;
 
+// Aerial perspective for the HDR-sky templates (ADR-0239): exponential-squared fog that takes the
+// sky's colour behind each pixel, clear near the play area and fading distant ground into the horizon.
+void sky_fog(gameplay::EnvironmentComponent& env, float start) {
+    env.fog = gameplay::EnvironmentComponent::Fog::ExponentialSquared;
+    env.fog_from_sky = true;
+    env.fog_color = {1, 1, 1, 1};
+    env.fog_start = start;
+    env.fog_density = 0.016f;
+}
+
+// A wide meadow under the play area so the ground runs to the fogged horizon instead of ending
+// in an edge against the sky. Not lightmapped (too large for the atlas), no collider.
+void backdrop(Scene& s) {
+    const Entity e = add(s, "Backdrop", {0, -0.02f, 0});
+    s.world().get<Transform>(e)->scale = {400, 1, 400};
+    auto& m = mesh(s, e, "plane", {1, 1, 1, 1}, 0.0f, 0.95f);
+    m.material_asset = starter_material_uuid(StarterMaterial::Grass);
+    m.cast_shadows = false;
+}
+
 // ---- In-game UI (HUD) ---------------------------------------------------------------------------
 
 Entity ui_rect(Scene& s, Entity parent, std::string_view name, math::Vec2 anchor, math::Vec2 pivot, math::Vec2 pos,
@@ -439,6 +459,7 @@ void build_3d(Scene& s, const TemplateOptions& options) {
         env.contact_shadow_length = 0.3f;
         env.environment_map = starter_sky_uuid(); // CC0 HDR sky: background and image-based lighting
         env.exposure = kHdrSkyExposure;
+        sky_fog(env, 12.0f);
     }
     const Entity ground = add(s, "Ground", {0, 0, 0});
     s.world().get<Transform>(ground)->scale = {20, 1, 20};
@@ -449,6 +470,7 @@ void build_3d(Scene& s, const TemplateOptions& options) {
         gm.material_asset = starter_material_uuid(StarterMaterial::Paving);
         gm.lightmapped = true;
     }
+    backdrop(s);
     {
         s.world().add<physics::RigidBodyComponent>(ground).type = physics::BodyType::Static;
         auto& c = s.world().add<physics::ColliderComponent>(ground);
@@ -708,6 +730,7 @@ void build_multiplayer(Scene& s, const TemplateOptions& options) {
         env.shadow_distance = 34.0f;
         env.contact_shadow_length = 0.3f;
         env.exposure = kHdrSkyExposure;
+        sky_fog(env, 14.0f);
         env.environment_map = starter_sky_uuid(); // CC0 HDR sky (ADR-0197)
     }
     const Entity ground = add(s, "Arena Floor", {0, 0, 0});
@@ -717,6 +740,7 @@ void build_multiplayer(Scene& s, const TemplateOptions& options) {
         gm.material_asset = starter_material_uuid(StarterMaterial::Paving);
         gm.lightmapped = true; // baked on creation (ADR-0134)
     }
+    backdrop(s);
     {
         s.world().add<physics::RigidBodyComponent>(ground).type = physics::BodyType::Static;
         auto& c = s.world().add<physics::ColliderComponent>(ground);
@@ -1855,6 +1879,7 @@ void build_nocode3d(Scene& s, const TemplateOptions& options) {
         env.sky_zenith = {0.16f, 0.36f, 0.8f, 1};
         env.sky_horizon = {0.7f, 0.8f, 0.92f, 1};
         env.exposure = kHdrSkyExposure;
+        sky_fog(env, 20.0f);
         // A CC0 HDR sky (data/materials/LICENSE.md) lights the scene and fills the background.
         env.environment_map = starter_sky_uuid();
     }
@@ -1875,7 +1900,7 @@ void build_nocode3d(Scene& s, const TemplateOptions& options) {
 
     // Lava below everything: falling in costs a life. The glow comes from two warm lights.
     const Entity lava = add(s, "Lava", {0, -3, -18});
-    s.world().get<Transform>(lava)->scale = {90, 1, 90};
+    s.world().get<Transform>(lava)->scale = {400, 1, 400}; // runs to the fogged horizon
     auto& lava_mesh = mesh(s, lava, "plane", {1, 1, 1, 1}, 0.0f, 0.7f);
     lava_mesh.cast_shadows = false;
     (void)Uuid::parse(kLavaMaterialUuid, lava_mesh.material_asset);

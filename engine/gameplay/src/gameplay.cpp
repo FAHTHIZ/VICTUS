@@ -330,6 +330,7 @@ void register_components() {
             .field(&E::fog_end, "fog_end", {.min = 0, .max = 100000, .speed = 0.5f, .tooltip = "Linear fog: fully fogged at this distance"})
             .field(&E::fog_density, "fog_density", {.min = 0, .max = 1, .speed = 0.0005f, .tooltip = "Exponential fog, per metre"})
             .field(&E::fog_max_opacity, "fog_max_opacity", {.min = 0, .max = 1, .speed = 0.01f})
+            .field(&E::fog_from_sky, "fog_from_sky", {.label = "Fog From Sky", .tooltip = "With an environment map, fog takes the colour of the sky behind it (fog colour tints it), so distant ground fades into the horizon"})
             .field(&E::coverage_amount, "coverage_amount", {.min = 0, .max = 1, .speed = 0.01f, .tooltip = "Snow/dust layer on upward faces"})
             .field(&E::coverage_color, "coverage_color")
             .field(&E::coverage_roughness, "coverage_roughness", {.min = 0.05f, .max = 1, .speed = 0.01f})

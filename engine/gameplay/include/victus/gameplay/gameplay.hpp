@@ -315,6 +315,7 @@ struct EnvironmentComponent {
     float fog_end{400.0f};
     float fog_density{0.004f};
     float fog_max_opacity{1.0f};
+    bool fog_from_sky{false}; // with an environment map: fog takes the sky's colour behind it, fog_color tints (ADR-0239)
     float coverage_amount{0.0f};
     math::Color coverage_color{0.86f, 0.89f, 0.95f, 1};
     float coverage_roughness{0.8f};

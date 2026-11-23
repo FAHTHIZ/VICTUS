@@ -10,6 +10,7 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 
 ### Added
 
+- Sky-coloured fog (ADR-0239): Environment `fog_from_sky` makes distance fog take the HDR sky's colour behind each pixel, so distant ground fades into the horizon. The 3D, no-code 3D and multiplayer templates use it, with a wide grass backdrop (or wider lava) so the world no longer ends in an edge. ([evidence](docs/STATUS.md#2026-11-23--sky-coloured-fog-and-horizon-backdrop-adr-0239))
 - Lava that looks molten in the no-code 3D template (ADR-0238): a dark cooled crust broken by thin, glowing, slowly flowing cracks instead of pastel blobs. ([evidence](docs/STATUS.md#2026-11-23--cracked-crust-lava-adr-0238))
 - Calibrated lighting in the 3D, no-code 3D and multiplayer templates (ADR-0237): a stronger, lower afternoon sun from the side and exposure 0.6, so new projects start with long readable shadows and no washed-out ground. ([evidence](docs/STATUS.md#2026-11-23--template-lighting-calibration-adr-0237))
 - Sun extraction from HDR skies (ADR-0236). The photographed sun in an HDR sky is removed before its ambient and reflections are baked, so it no longer doubles the scene's directional light (washed-out shadows, a second highlight); a scene with only an HDR gets a matching shadowed sun from it, and lightmaps bake under the HDR sky instead of the analytic one. ([evidence](docs/STATUS.md#2026-11-23--sun-extraction-from-hdr-skies-adr-0236))

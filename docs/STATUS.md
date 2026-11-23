@@ -3637,3 +3637,16 @@ Verified:
 - Local clang-tidy 21.1.8 (`tools/lint/run_clang_tidy.py -p build/tidy --changed-since ea1e329`): 0 of 6 files with diagnostics.
 - Next task: distance fog and aerial perspective in the HDR-sky templates.
 
+## 2026-11-23 — Sky-coloured fog and horizon backdrop (ADR-0239)
+
+Built:
+- `render::Environment::fog_from_environment` / `EnvironmentComponent::fog_from_sky` (reflected and serialized): fog radiance from the prefiltered environment along the view ray in `pbr.frag` (fog mode + 4); particles, precipitation and water get the SH horizon average. Regenerated `engine/render/generated/builtin_shaders.cpp`.
+- Templates: exponential-squared sky fog in 3D, no-code 3D and multiplayer; a 400 m grass backdrop under the 3D and multiplayer play areas; the no-code 3D lava plane is 400 m.
+
+Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, Xvfb + lavapipe):
+- Local glslang 16.2.0 / spirv-cross regenerate the committed shader library byte-identically before the change; `compile_shaders.py --check` up to date after it.
+- Template renders (`victus run --quality high --frames 40`): the ground and lava fade into the sky at the horizon with no visible edge; 0 script errors.
+- `VICTUS_REQUIRE_GPU=1 ctest -R "reference_scenes|render_compare|cli_smoke|perf_budgets"`: reference scenes, render compare and CLI smoke passed; perf budgets passed when run alone (sample-arena frame p95 exceeded the coarse 400 ms ceiling only while running two GPU tests in parallel).
+- Full `ctest -j2` (other tests): 44 of 44 passed (device loss skipped as usual).
+- Next task: anti-tiling for the starter materials (the grass backdrop shows repetition).
+

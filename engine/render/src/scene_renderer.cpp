@@ -3994,6 +3994,20 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         lighting.env_params = {1.0f, static_cast<float>(env_map->mip_count() - 1), env_intensity, env_rotation};
         for (std::size_t i = 0; i < 9; ++i) lighting.env_sh[i] = Vec4(env_map->sh().coefficients[i] * env_intensity, 0.0f);
     }
+    // Sky-coloured fog (ADR-0239): fog_color tints the blurred environment along each view ray
+    // (scaled by environment_intensity instead of ambient_intensity), so fogged geometry fades into
+    // the sky behind it. pbr.frag reads it as mode + 4; particles, rain and water keep a plain
+    // colour, the sky's average horizon radiance times the tint.
+    Vec4 plain_fog = lighting.fog_color;
+    if (env_.fog_from_environment && env_.fog_mode != FogMode::None && env_map && env_map->cube()) {
+        const auto& sh = env_map->sh();
+        Vec3 horizon{0, 0, 0};
+        for (const Vec3 d : {Vec3{1, 0, 0}, Vec3{-1, 0, 0}, Vec3{0, 0, 1}, Vec3{0, 0, -1}}) horizon = horizon + sh.diffuse(d);
+        horizon = horizon * (0.25f * env_intensity); // SH diffuse is already radiance (divided by pi)
+        const Color& t = env_.fog_color;
+        lighting.fog_color = {t.r * env_intensity, t.g * env_intensity, t.b * env_intensity, static_cast<float>(env_.fog_mode) + 4.0f};
+        plain_fog = {t.r * horizon.x, t.g * horizon.y, t.b * horizon.z, static_cast<float>(env_.fog_mode)};
+    }
     for (std::uint32_t c = 0; c < 4; ++c) lighting.cascade_vp[c] = cascade_vp_[c];
     const bool volume_allowed = volume_baked_ ? S.baked_probes : S.irradiance_volumes;
     const IrradianceVolume* gi = volume_allowed && volume_ && volume_->texture() && volume_->valid_count() > 0 ? volume_ : nullptr;
@@ -4320,7 +4334,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         precip_fu.proj = {proj[3].z, proj[2].z, rain_occlusion ? 1.0f : 0.0f, rain_bias};
         precip_fu.screen = {1.0f / static_cast<float>(rw), 1.0f / static_cast<float>(rh), 1.0f / 0.1f, snow ? 1.0f : 0.0f};
         precip_fu.rain_vp = rain_vp;
-        precip_fu.fog_color = lighting.fog_color;
+        precip_fu.fog_color = plain_fog;
         precip_fu.fog_params = lighting.fog_params;
         precip_fu.view = {1.0f / proj[0].x, 1.0f / proj[1].y, 0, 0};
         precip_fu.volumetric = lighting.volumetric;
@@ -5021,7 +5035,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         base.horizon = lighting.horizon_color;
         base.ground = lighting.ground_color;
         base.screen = {1.0f / static_cast<float>(rw), 1.0f / static_cast<float>(rh), 0, 0};
-        base.fog_color = lighting.fog_color;
+        base.fog_color = plain_fog;
         base.fog_params = lighting.fog_params;
         base.view_proj = view_proj;
         const bool ssr = S.screen_space_reflections;
@@ -5330,7 +5344,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     pu.proj = {proj[3].z, proj[2].z, 0, 0};
                     pu.screen = {1.0f / static_cast<float>(rw), 1.0f / static_cast<float>(rh), 1.0f / std::max(b.material.softness, 1e-3f),
                                  add ? 1.0f : 0.0f};
-                    pu.fog_color = lighting.fog_color;
+                    pu.fog_color = plain_fog;
                     pu.fog_params = lighting.fog_params;
                     pu.view = {1.0f / proj[0].x, 1.0f / proj[1].y, 0, 0};
                     pu.volumetric = lighting.volumetric;
