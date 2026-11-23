@@ -97,6 +97,8 @@ const char* field_key(MaterialField f) noexcept {
     case MaterialField::TriplanarSharpness: return "triplanar_sharpness";
     case MaterialField::Clearcoat: return "clearcoat";
     case MaterialField::ClearcoatRoughness: return "clearcoat_roughness";
+    case MaterialField::SheenColor: return "sheen_color";
+    case MaterialField::SheenRoughness: return "sheen_roughness";
     default: return "";
     }
 }
@@ -134,6 +136,8 @@ void MaterialAsset::copy_field(const MaterialAsset& src, MaterialField f) {
     case MaterialField::TriplanarSharpness: triplanar_sharpness = src.triplanar_sharpness; break;
     case MaterialField::Clearcoat: clearcoat = src.clearcoat; break;
     case MaterialField::ClearcoatRoughness: clearcoat_roughness = src.clearcoat_roughness; break;
+    case MaterialField::SheenColor: sheen_color = src.sheen_color; break;
+    case MaterialField::SheenRoughness: sheen_roughness = src.sheen_roughness; break;
     default: break;
     }
 }
@@ -201,6 +205,10 @@ json::Value MaterialAsset::to_json() const {
         v.set("clearcoat", num(clearcoat)); // omitted when off, so older files round-trip
     if (clearcoat_roughness != 0.03f || (is_instance() && overrides_field(MaterialField::ClearcoatRoughness)))
         v.set("clearcoat_roughness", num(clearcoat_roughness));
+    if (sheen_color != math::Vec3{} || (is_instance() && overrides_field(MaterialField::SheenColor)))
+        v.set("sheen_color", floats({sheen_color.x, sheen_color.y, sheen_color.z})); // omitted when off
+    if (sheen_roughness != 0.3f || (is_instance() && overrides_field(MaterialField::SheenRoughness)))
+        v.set("sheen_roughness", num(sheen_roughness));
     if (!is_instance()) return v;
     // Instances store only what they override.
     Value inst = Value::object();
@@ -233,7 +241,8 @@ Result<MaterialAsset> MaterialAsset::from_json(const json::Value& v) {
                     r.boolean("unlit", m.unlit) && r.boolean("double_sided", m.double_sided) &&
                     r.number("coverage_response", m.coverage_response) && r.number("occlusion_strength", m.occlusion_strength) && r.number("responsive", m.responsive) &&
                     r.boolean("triplanar", m.triplanar) && r.number("triplanar_sharpness", m.triplanar_sharpness) &&
-                    r.number("clearcoat", m.clearcoat) && r.number("clearcoat_roughness", m.clearcoat_roughness);
+                    r.number("clearcoat", m.clearcoat) && r.number("clearcoat_roughness", m.clearcoat_roughness) &&
+                    r.vec("sheen_color", &m.sheen_color.x, 3, 3) && r.number("sheen_roughness", m.sheen_roughness);
     if (!ok) return make_error(ErrorCode::ParseError, r.error);
     m.emissive = {emissive[0], emissive[1], emissive[2], 1.0f};
     if (!r.uuid("shader", m.shader)) return make_error(ErrorCode::ParseError, r.error);
@@ -293,6 +302,9 @@ Result<MaterialAsset> MaterialAsset::from_json(const json::Value& v) {
     m.roughness = std::clamp(m.roughness, 0.0f, 1.0f);
     m.clearcoat = std::isfinite(m.clearcoat) ? std::clamp(m.clearcoat, 0.0f, 1.0f) : 0.0f;
     m.clearcoat_roughness = std::isfinite(m.clearcoat_roughness) ? std::clamp(m.clearcoat_roughness, 0.0f, 1.0f) : 0.03f;
+    for (float* ch : {&m.sheen_color.x, &m.sheen_color.y, &m.sheen_color.z})
+        *ch = std::isfinite(*ch) ? std::clamp(*ch, 0.0f, 1.0f) : 0.0f;
+    m.sheen_roughness = std::isfinite(m.sheen_roughness) ? std::clamp(m.sheen_roughness, 0.0f, 1.0f) : 0.3f;
     m.alpha_cutoff = std::clamp(m.alpha_cutoff, 0.0f, 1.0f);
     m.emissive_strength = std::max(m.emissive_strength, 0.0f);
     return m;

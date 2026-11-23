@@ -93,7 +93,7 @@ std::uint64_t mix(std::uint64_t h, std::uint64_t v) noexcept {
 // Every Material field as 32-bit words (floats by bit pattern), in a fixed layout: equal
 // signatures mean identical materials, and the hash covers all of it (ADR-0229).
 // A new Material field changes its size: add it to pack_material and same_material, then here.
-static_assert(sizeof(void*) != 8 || sizeof(Material) == 264, "pack_material and same_material must cover every Material field");
+static_assert(sizeof(void*) != 8 || sizeof(Material) == 280, "pack_material and same_material must cover every Material field");
 void pack_material(const Material& m, SceneRenderer::MaterialSignature& sig) noexcept {
     std::uint32_t* w = sig.words.data();
     std::size_t n = 0;
@@ -107,6 +107,7 @@ void pack_material(const Material& m, SceneRenderer::MaterialSignature& sig) noe
     f(m.emissive_strength), f(m.metallic), f(m.roughness), f(m.normal_scale), f(m.alpha_cutoff);
     f(m.uv_scale.x), f(m.uv_scale.y), f(m.uv_offset.x), f(m.uv_offset.y), f(m.coverage_response);
     f(m.occlusion_strength), f(m.triplanar_sharpness), f(m.clearcoat), f(m.clearcoat_roughness), f(m.responsive);
+    f(m.sheen_color.x), f(m.sheen_color.y), f(m.sheen_color.z), f(m.sheen_roughness);
     t(m.base_color_texture), t(m.metallic_roughness_texture), t(m.normal_texture), t(m.emissive_texture);
     w[n++] = (m.double_sided ? 1u : 0u) | (m.unlit ? 2u : 0u) | (m.cast_shadows ? 4u : 0u) | (m.nearest_filter ? 8u : 0u) |
              (m.vertex_alpha_coverage_mask ? 16u : 0u) | (m.shadow_only ? 32u : 0u) | (m.triplanar ? 64u : 0u) |
@@ -162,7 +163,8 @@ bool same_material(const Material& a, const Material& b) noexcept {
            a.vertex_alpha_coverage_mask == b.vertex_alpha_coverage_mask && a.coverage_response == b.coverage_response &&
            a.occlusion_strength == b.occlusion_strength && a.blend == b.blend && a.shadow_only == b.shadow_only &&
            a.triplanar == b.triplanar && a.triplanar_sharpness == b.triplanar_sharpness && a.clearcoat == b.clearcoat &&
-           a.clearcoat_roughness == b.clearcoat_roughness && a.responsive == b.responsive;
+           a.clearcoat_roughness == b.clearcoat_roughness && a.responsive == b.responsive && a.sheen_color == b.sheen_color &&
+           a.sheen_roughness == b.sheen_roughness;
 }
 struct LightingUniforms {
     Vec4 camera_pos;
@@ -209,6 +211,7 @@ struct MaterialUniforms {
     Vec4 blend;        // x 0 opaque, 1 alpha, 2 additive (ADR-0119)
     Vec4 mapping;      // x triplanar (ADR-0197), y blend sharpness
     Vec4 layers;       // x clear coat, y clear coat roughness (ADR-0203)
+    Vec4 sheen;        // rgb sheen colour, a sheen roughness (ADR-0231)
 };
 struct ProbeUniforms {
     Vec4 box_min, box_max, position;
@@ -4761,6 +4764,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                              d->lod_fade};
                 mat.mapping = {m.triplanar ? 1.0f : 0.0f, std::clamp(m.triplanar_sharpness, 1.0f, 64.0f), 0.0f, 0.0f};
                 mat.layers = {std::clamp(m.clearcoat, 0.0f, 1.0f), std::clamp(m.clearcoat_roughness, 0.0f, 1.0f), 0.0f, 0.0f};
+                mat.sheen = {std::clamp(m.sheen_color.x, 0.0f, 1.0f), std::clamp(m.sheen_color.y, 0.0f, 1.0f),
+                             std::clamp(m.sheen_color.z, 0.0f, 1.0f), std::clamp(m.sheen_roughness, 0.0f, 1.0f)};
                 ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 1, mat);
                 if (m.vertex_stage) push_vertex_material(ctx.cmd, m, false);
                 auto pick = [](rhi::TextureHandle t, rhi::TextureHandle fallback) { return t ? t : fallback; };

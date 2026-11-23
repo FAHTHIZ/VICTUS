@@ -848,6 +848,8 @@ Result<render::Material> GpuAssetCache::material(const Uuid& uuid) {
         m.triplanar_sharpness = src->triplanar_sharpness;
         m.clearcoat = src->clearcoat;
         m.clearcoat_roughness = src->clearcoat_roughness;
+        m.sheen_color = src->sheen_color;
+        m.sheen_roughness = src->sheen_roughness;
         // Nearest when the material asks for it or its base colour texture is imported as pixel art.
         m.nearest_filter = src->filter == assets::TextureFilter::Nearest || texture_nearest(src->base_color_texture);
         m.shader_params = src->shader_params;
@@ -1067,6 +1069,8 @@ Result<const GpuModel*> GpuAssetCache::add_model(const Uuid& uuid, assets::Cooke
         m.alpha_cutoff = src.alpha_cutoff;
         m.clearcoat = src.clearcoat;
         m.clearcoat_roughness = src.clearcoat_roughness;
+        m.sheen_color = {src.sheen_color[0], src.sheen_color[1], src.sheen_color[2]};
+        m.sheen_roughness = src.sheen_roughness;
         m.double_sided = src.double_sided;
         m.unlit = src.unlit;
         m.base_color_texture = tex_or(src.base_color_texture);

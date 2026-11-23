@@ -298,6 +298,14 @@ void Editor::draw_material_editor() {
             ImGui::SetItemTooltip("How blurry the coat's reflection is, independent of the surface underneath");
             inherit_button(F::ClearcoatRoughness);
         }
+        mark(ImGui::ColorEdit3("Sheen", &m.sheen_color.x, ImGuiColorEditFlags_Float), F::SheenColor);
+        ImGui::SetItemTooltip("Soft glow at grazing angles from fibres and fuzz: velvet, cotton, felt, peach skin. Black = off");
+        inherit_button(F::SheenColor);
+        if (m.sheen_color != math::Vec3{}) {
+            mark(ImGui::SliderFloat("Sheen Roughness", &m.sheen_roughness, 0.0f, 1.0f), F::SheenRoughness);
+            ImGui::SetItemTooltip("Low: a thin bright rim (satin, silk). High: a wide soft haze (velvet, wool)");
+            inherit_button(F::SheenRoughness);
+        }
     }
     if (ImGui::CollapsingHeader("Emission")) {
         mark(color("Emissive", m.emissive, false), F::Emissive);

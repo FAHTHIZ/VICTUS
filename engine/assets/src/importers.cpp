@@ -715,6 +715,13 @@ private:
             if (cc.clearcoat_texture.texture || cc.clearcoat_roughness_texture.texture || cc.clearcoat_normal_texture.texture)
                 warn(out.name + ": KHR_materials_clearcoat textures are ignored (the coat uses its factors)");
         }
+        if (m->has_sheen) {
+            const auto& sh = m->sheen;
+            for (int i = 0; i < 3; ++i) out.sheen_color[i] = std::isfinite(sh.sheen_color_factor[i]) ? std::clamp(sh.sheen_color_factor[i], 0.0f, 1.0f) : 0.0f;
+            out.sheen_roughness = std::isfinite(sh.sheen_roughness_factor) ? std::clamp(sh.sheen_roughness_factor, 0.0f, 1.0f) : 0.0f;
+            if (sh.sheen_color_texture.texture || sh.sheen_roughness_texture.texture)
+                warn(out.name + ": KHR_materials_sheen textures are ignored (the sheen uses its factors)");
+        }
         out.double_sided = m->double_sided;
         out.unlit = m->unlit;
         const auto index = static_cast<std::uint32_t>(model_.materials.size());

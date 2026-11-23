@@ -22,6 +22,8 @@
 //     "triplanar_sharpness": 4     // blend exponent between the three projections (1 .. 64)
 //     "clearcoat": 0..1            // glossy dielectric layer over the base (ADR-0203); 0 = none
 //     "clearcoat_roughness": 0.03  // the coat's own roughness
+//     "sheen_color": [r, g, b]     // cloth/velvet sheen, linear (ADR-0231); black = none
+//     "sheen_roughness": 0.3       // how wide the sheen rim spreads
 //   }
 //
 // Material instances name a parent and contain only the fields they override; everything else
@@ -53,7 +55,7 @@ enum class MaterialField : std::uint8_t {
     BaseColor, BaseColorTexture, Metallic, Roughness, MetallicRoughnessTexture, NormalTexture, NormalScale, Emissive,
     EmissiveStrength, EmissiveTexture, AlphaCutoff, UvScale, UvOffset, Filter, Unlit, DoubleSided, Shader, ShaderParams,
     VertexAlpha, CoverageResponse, Blend, OcclusionStrength, ShaderTextures, Responsive, Triplanar, TriplanarSharpness,
-    Clearcoat, ClearcoatRoughness, Count
+    Clearcoat, ClearcoatRoughness, SheenColor, SheenRoughness, Count
 };
 inline constexpr std::size_t kMaterialFieldCount = static_cast<std::size_t>(MaterialField::Count);
 [[nodiscard]] constexpr std::uint32_t field_bit(MaterialField f) noexcept { return 1u << static_cast<unsigned>(f); }
@@ -80,6 +82,9 @@ struct MaterialAsset {
     // (lacquer, car paint, glazed ceramic). 0 = none.
     float clearcoat{0.0f};
     float clearcoat_roughness{0.03f};
+    // Sheen (ADR-0231): the soft rim of cloth, velvet, felt and peach fuzz. Black = none.
+    math::Vec3 sheen_color{0, 0, 0};
+    float sheen_roughness{0.3f};
     TextureFilter filter{TextureFilter::Linear};
     bool unlit{false};
     bool double_sided{false};

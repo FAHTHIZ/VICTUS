@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="400" viewBox="0 0 1280 400" role="img" aria-label="VICTUS: open engine for complete 2D and 3D games">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#05070d"/>
+      <stop offset="0.55" stop-color="#0b1222"/>
+      <stop offset="1" stop-color="#140b24"/>
+    </linearGradient>
+    <radialGradient id="glowA" cx="0.22" cy="0.15" r="0.6">
+      <stop offset="0" stop-color="#22d3ee" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#22d3ee" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowB" cx="0.85" cy="0.95" r="0.6">
+      <stop offset="0" stop-color="#a855f7" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#a855f7" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="word" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#e0f7ff"/>
+      <stop offset="0.5" stop-color="#7dd3fc"/>
+      <stop offset="1" stop-color="#c4b5fd"/>
+    </linearGradient>
+    <linearGradient id="line" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#22d3ee" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#22d3ee"/>
+      <stop offset="1" stop-color="#a855f7" stop-opacity="0"/>
+    </linearGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0H0V40" fill="none" stroke="#7dd3fc" stroke-opacity="0.06" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="1280" height="400" fill="url(#bg)"/>
+  <rect width="1280" height="400" fill="url(#grid)"/>
+  <rect width="1280" height="400" fill="url(#glowA)"/>
+  <rect width="1280" height="400" fill="url(#glowB)"/>
+  <!-- wireframe icosahedron hint -->
+  <g transform="translate(1065 200)" fill="none" stroke="#7dd3fc" stroke-opacity="0.35" stroke-width="1.4">
+    <polygon points="0,-120 104,-60 104,60 0,120 -104,60 -104,-60"/>
+    <polygon points="0,-120 60,0 0,120 -60,0" stroke="#c4b5fd" stroke-opacity="0.45"/>
+    <path d="M-104,-60 L60,0 L104,-60 M-104,60 L60,0 L104,60 M-104,-60 L-60,0 L-104,60 M0,-120 L-60,0 L0,120"/>
+    <circle r="150" stroke-opacity="0.12"/>
+    <circle r="185" stroke-opacity="0.06"/>
+  </g>
+  <g transform="translate(215 200)" fill="none" stroke="#22d3ee" stroke-opacity="0.12">
+    <circle r="250"/>
+  </g>
+  <text x="96" y="205" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-size="128" font-weight="800" letter-spacing="18" fill="url(#word)">VICTUS</text>
+  <rect x="100" y="232" width="560" height="2" fill="url(#line)"/>
+  <text x="100" y="276" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-size="26" font-weight="500" fill="#cbd5e1">The open engine for complete 2D and 3D games</text>
+  <text x="100" y="318" font-family="JetBrains Mono, Consolas, Menlo, monospace" font-size="17" fill="#7dd3fc" fill-opacity="0.85" letter-spacing="1.5">PBR · BAKED GI · PHYSICS · ANIMATION · AI · LUAU · MULTIPLAYER · STUDIO</text>
+</svg>

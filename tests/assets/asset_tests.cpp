@@ -572,6 +572,66 @@ TEST_CASE("material clear coat round trips, clamps, inherits and is omitted at i
     CHECK(apply_instance(parent, child).clearcoat == doctest::Approx(0.0f));
 }
 
+TEST_CASE("material sheen round trips, clamps, inherits and is omitted at its default (ADR-0231)") {
+    auto m = MaterialAsset::from_json(*json::parse(R"({"victus_material": 1, "sheen_color": [0.9, 0.4, 0.2], "sheen_roughness": 0.6})"));
+    REQUIRE(m.ok());
+    CHECK(m->sheen_color.x == doctest::Approx(0.9f));
+    CHECK(m->sheen_color.z == doctest::Approx(0.2f));
+    CHECK(m->sheen_roughness == doctest::Approx(0.6f));
+    auto back = MaterialAsset::from_json(m->to_json());
+    REQUIRE(back.ok());
+    CHECK(back->sheen_color.y == doctest::Approx(0.4f));
+    CHECK(back->sheen_roughness == doctest::Approx(0.6f));
+    CHECK(MaterialAsset{}.to_json().find("sheen_color") == nullptr);
+    CHECK(MaterialAsset{}.to_json().find("sheen_roughness") == nullptr);
+    auto wild = MaterialAsset::from_json(*json::parse(R"({"victus_material": 1, "sheen_color": [3, -1, 0.5], "sheen_roughness": 9})"));
+    REQUIRE(wild.ok());
+    CHECK(wild->sheen_color.x == doctest::Approx(1.0f));
+    CHECK(wild->sheen_color.y == doctest::Approx(0.0f));
+    CHECK(wild->sheen_roughness == doctest::Approx(1.0f));
+    CHECK_FALSE(MaterialAsset::from_json(*json::parse(R"({"victus_material": 1, "sheen_color": [1, 1]})")).ok());
+    CHECK_FALSE(MaterialAsset::from_json(*json::parse(R"({"victus_material": 1, "sheen_color": "red"})")).ok());
+    MaterialAsset parent;
+    parent.sheen_color = {0.5f, 0.5f, 0.5f};
+    MaterialAsset child;
+    child.parent = Uuid::generate();
+    child.overrides = 0;
+    CHECK(apply_instance(parent, child).sheen_color.x == doctest::Approx(0.5f)); // inherited
+    child.overrides = field_bit(MaterialField::SheenColor);
+    child.sheen_color = {};
+    CHECK(apply_instance(parent, child).sheen_color.x == doctest::Approx(0.0f));
+}
+
+TEST_CASE("assets: glTF KHR_materials_sheen factors import and survive the cooked format (ADR-0231)") {
+    TempDir dir("victus_gltf_sheen");
+    test::GltfFixture fx;
+    json::Value mat = fx.doc["materials"][0];
+    json::Value sheen = json::Value::object();
+    sheen.set("sheenColorFactor", json::Value(json::Array{json::Value(0.8), json::Value(0.3), json::Value(0.1)}));
+    sheen.set("sheenRoughnessFactor", 0.55);
+    json::Value ext = json::Value::object();
+    ext.set("KHR_materials_sheen", sheen);
+    mat.set("extensions", ext);
+    fx.doc.set("materials", json::Value(json::Array{mat}));
+    fx.doc.set("extensionsUsed", json::Value(json::Array{json::Value("KHR_materials_sheen")}));
+    fx.set_buffer_uri("quad.bin");
+    write_bytes(dir.path / "quad.bin", fx.bin);
+    write_text(dir.path / "velvet.gltf", json::stringify(fx.doc));
+    auto m = import_gltf(dir.path / "velvet.gltf", {}, dir.path);
+    REQUIRE_MESSAGE(m.ok(), (m.ok() ? "" : m.error().message));
+    REQUIRE(m->materials.size() == 1);
+    CHECK(m->materials[0].sheen_color[0] == doctest::Approx(0.8f));
+    CHECK(m->materials[0].sheen_color[1] == doctest::Approx(0.3f));
+    CHECK(m->materials[0].sheen_color[2] == doctest::Approx(0.1f));
+    CHECK(m->materials[0].sheen_roughness == doctest::Approx(0.55f));
+    CookedHeader h;
+    h.kind = AssetKind::Model;
+    auto back = deserialize_model(serialize(h, *m));
+    REQUIRE(back.ok());
+    CHECK(back->materials[0].sheen_color[0] == doctest::Approx(0.8f));
+    CHECK(back->materials[0].sheen_roughness == doctest::Approx(0.55f));
+}
+
 TEST_CASE("assets: HDR textures cook to half floats with SH irradiance and an LDR preview") {
     TempDir dir("victus_hdr_cook");
     render::ImageF env;

@@ -82,6 +82,10 @@ struct Material {
     // follows the vertex normal, so a normal-mapped base keeps a smooth reflection on top.
     float clearcoat{0.0f};
     float clearcoat_roughness{0.03f};
+    // Sheen (ADR-0231, KHR_materials_sheen): the soft retro-reflective rim of cloth, velvet,
+    // felt and peach fuzz. Linear colour; black = none. Its roughness widens the rim.
+    math::Vec3 sheen_color{0, 0, 0};
+    float sheen_roughness{0.3f};
     bool nearest_filter{false}; // point sampling (pixel art); default is trilinear
     rhi::TextureHandle base_color_texture, metallic_roughness_texture, normal_texture, emissive_texture;
     bool double_sided{false};
@@ -1124,7 +1128,7 @@ public:
     // Every Material field packed as 32-bit words (floats by bit pattern); equal signatures mean
     // identical materials (ADR-0229). Public so file-local helpers in the renderer can fill it.
     struct MaterialSignature {
-        std::array<std::uint32_t, 64> words; // 60 used, zero padded to whole 32-byte hash blocks
+        std::array<std::uint32_t, 64> words; // 64 used, zero padded to whole 32-byte hash blocks
         bool operator==(const MaterialSignature&) const noexcept = default;
     };
 private:

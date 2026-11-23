@@ -183,6 +183,7 @@ layout(set = 3, binding = 1) uniform Material {
                          // z: alpha to coverage, w: LOD cross-fade (ADR-0184; > 0 keeps dither < w, < 0 keeps dither >= -w)
     vec4 mapping;        // x: 1 = world-space triplanar mapping (ADR-0197), y: blend sharpness
     vec4 layers;         // x: clear coat strength (ADR-0203), y: clear coat roughness
+    vec4 sheen;          // rgb: sheen colour, linear (ADR-0231, KHR_materials_sheen; 0 = none), a: sheen roughness
 } material;
 
 // Local reflection probe for this draw (box-projected cube bound to u_env instead of the scene's
@@ -480,6 +481,40 @@ vec3 with_coat(vec3 base_lit, vec3 Nc, vec3 V, vec3 L, vec3 radiance, float coat
     if (coat <= 0.0) return base_lit;
     vec4 k = clear_coat(Nc, V, L, coat, coat_roughness);
     return base_lit * k.a + k.rgb * radiance;
+}
+
+// ---- Sheen (ADR-0231) ----
+// Retro-reflective fuzz of cloth, velvet, felt, peach skin and dusty surfaces, as in
+// KHR_materials_sheen and Filament's cloth model: the Charlie distribution (Estevez & Kulla 2017)
+// with Neubelt's visibility term. The base below is scaled by 1 - max(sheen colour) * E(N.V), the
+// sheen lobe's directional albedo (the glTF spec's albedo scaling), so the layer adds no energy.
+float distribution_charlie(float NdotH, float roughness) {
+    float inv_alpha = 1.0 / max(roughness * roughness, 1e-3);
+    float sin2h = max(1.0 - NdotH * NdotH, 0.0078125); // 2^-7 avoids fp underflow
+    return (2.0 + inv_alpha) * pow(sin2h, inv_alpha * 0.5) / (2.0 * PI);
+}
+float visibility_neubelt(float NdotV, float NdotL) {
+    return clamp(1.0 / (4.0 * (NdotL + NdotV - NdotL * NdotV)), 0.0, 1.0);
+}
+// Directional albedo of the sheen lobe: the Imageworks analytic fit of the pre-integrated
+// Charlie-Neubelt BRDF (also used for the ambient term).
+float sheen_albedo(float NdotV, float roughness) {
+    float r2 = roughness * roughness;
+    float a = roughness < 0.25 ? -339.2 * r2 + 161.4 * roughness - 25.9 : -8.48 * r2 + 14.3 * roughness - 9.95;
+    float b = roughness < 0.25 ? 44.0 * r2 - 23.7 * roughness + 3.26 : 1.97 * r2 - 3.27 * roughness + 0.72;
+    float dg = exp(a * NdotV + b) + (roughness < 0.25 ? 0.0 : 0.1 * (roughness - 0.25));
+    return clamp(dg / PI, 0.0, 1.0);
+}
+float max3(vec3 v) { return max(v.x, max(v.y, v.z)); }
+// Base lighting from L with the sheen layer on top (N.L included, like brdf()).
+vec3 with_sheen(vec3 base_lit, vec3 N, vec3 V, vec3 L, vec3 radiance, vec3 sheen_color, float sheen_roughness,
+                float base_scale) {
+    if (max3(sheen_color) <= 0.0) return base_lit;
+    float NdotL = max(dot(N, L), 0.0);
+    float NdotV = max(dot(N, V), 1e-4);
+    vec3 H = normalize(V + L);
+    float lobe = distribution_charlie(max(dot(N, H), 0.0), sheen_roughness) * visibility_neubelt(NdotV, NdotL);
+    return base_lit * base_scale + sheen_color * (lobe * NdotL) * radiance;
 }
 
 // ---- Area lights (ADR-0194) ----
@@ -978,6 +1013,10 @@ void main() {
     float coat = clamp(material.layers.x, 0.0, 1.0);
     float coat_roughness = clamp(material.layers.y, 0.045, 1.0);
     vec3 Nc = geometric_n;
+    // Sheen: colour 0 = none; it follows the shading normal (fibres follow the weave's normal map).
+    vec3 sheen_color = max(material.sheen.rgb, vec3(0.0));
+    float sheen_roughness = clamp(material.sheen.a, 0.07, 1.0);
+    float sheen_scale = 1.0 - max3(sheen_color) * sheen_albedo(max(dot(N, V), 1e-4), sheen_roughness);
 
     vec3 L = normalize(-lighting.sun_dir.xyz);
     vec4 lm_texel = v_lightmap.z > 0.5 ? texture(u_lightmap, v_lightmap.xy) : vec4(0.0, 0.0, 0.0, 1.0);
@@ -992,8 +1031,9 @@ void main() {
     float contact = lighting.camera_pos.w > 1.5 ? screen_occlusion.g : 1.0;
     float sun_visibility = shadow_factor(N, L, baked_sun) * cloud_shadow(L) * contact;
     vec3 sun_radiance = lighting.sun_color.rgb * sun_cookie(v_world_pos);
-    vec3 color = with_coat(brdf(N, V, L, sun_radiance, albedo, metallic, roughness), Nc, V, L, sun_radiance,
-                           coat, coat_roughness) * sun_visibility;
+    vec3 color = with_coat(with_sheen(brdf(N, V, L, sun_radiance, albedo, metallic, roughness), N, V, L, sun_radiance,
+                                      sheen_color, sheen_roughness, sheen_scale),
+                           Nc, V, L, sun_radiance, coat, coat_roughness) * sun_visibility;
 
     if (lighting.ground_color.w > 0.5) {
         vec3 grid = lighting.cluster_grid.xyz;
@@ -1026,6 +1066,7 @@ void main() {
             if (l.spot.y < 1.5) radiance *= local_cookie(l, v_world_pos);
             vec3 lit = (l.spot.y < 0.5 && l.spot.x > 0.0) ? sphere_light(N, V, to_light, l.spot.x, radiance, albedo, metallic, roughness)
                                                           : brdf(N, V, Ld, radiance, albedo, metallic, roughness);
+            lit = with_sheen(lit, N, V, Ld, radiance, sheen_color, sheen_roughness, sheen_scale);
             color += with_coat(lit, Nc, V, Ld, radiance, coat, coat_roughness);
         }
     }
@@ -1066,6 +1107,12 @@ void main() {
     float spec_ao = clamp(pow(NdotV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao, 0.0, 1.0);
     spec_ao *= lightmap_occlusion;
     vec3 ambient = kd * albedo * irradiance * ao + specular * spec_ao;
+    if (max3(sheen_color) > 0.0) {
+        // Ambient sheen: the lobe is broad, so the diffuse irradiance stands in for the
+        // pre-filtered environment, weighted by the lobe's directional albedo.
+        float sheen_dg = sheen_albedo(NdotV, sheen_roughness);
+        ambient = ambient * sheen_scale + sheen_color * irradiance * (sheen_dg * ao * lightmap_occlusion);
+    }
     if (coat > 0.0) {
         // The coat's environment reflection along the vertex normal; it takes the screen-space
         // reflection when the base traced one (close enough: the base normal is normal-mapped).

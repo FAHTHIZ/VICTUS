@@ -3521,3 +3521,19 @@ Verified (2-vCPU sandbox, GCC 15.2, Release, lavapipe):
 - Rejected: an open-addressing map for key → record, extract 1.07-1.28 ms against 0.86-1.03 ms with `std::unordered_map` (five runs each).
 - Not verified: the 1 ms accept target (transforms + extraction + submission about 1.0-1.1 ms; render adds 0.3 ms).
 - Next task: per-entity extraction work for unchanged renderers (component lookups, material assembly), then a measured LTO build.
+
+## 2026-11-23 — Sheen materials (ADR-0231)
+
+Built:
+- `render::Material::sheen_color` / `sheen_roughness`, a `sheen` vec4 in the material uniform block, `pbr.frag` Charlie distribution with Neubelt visibility on the shading normal for the sun, point, spot and sphere lights (under the clear coat), base and ambient scaled by `1 - max(sheen) * E(N.V)` from the Imageworks analytic albedo fit, ambient sheen from the diffuse irradiance with AO and lightmap occlusion. `pack_material` / `same_material` cover the fields (`sizeof(Material)` 280, 64/64 signature words).
+- `.vmat` `sheen_color` (3 numbers) and `sheen_roughness`, omitted at defaults, clamped, inherited by instances (`MaterialField::SheenColor`, `SheenRoughness`); glTF `KHR_materials_sheen` factors into `ModelMaterial` with a warning for sheen textures; cooked model format 13; `GpuAssetCache` passes both through for `.vmat` and model materials; Studio material panel Sheen colour and Sheen Roughness.
+- Tests: `gpu sheen: fabric gains a grazing-angle rim without brightening its centre`, `material sheen round trips, clamps, inherits and is omitted at its default`, `assets: glTF KHR_materials_sheen factors import and survive the cooked format`.
+- README redesigned (banner `docs/images/brand/victus_banner.svg`, feature cards, five-step table, feature matrix, status table).
+
+Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, Mesa lavapipe Vulkan, `SDL_VIDEO_DRIVER=offscreen VICTUS_REQUIRE_GPU=1`):
+- `python3 tools/shaders/compile_shaders.py` regenerated pbr.frag and pbr.frag#fp16 (64 shaders); `--check` up to date.
+- `victus_gpu_tests -tc="gpu sheen*"`: mean rgb sum on the rim (40-47 px) plain 154.2, velvet (sheen 1/0.55/0.7, roughness 0.3) 333.0, wool (roughness 0.9) 450.8; centre (0-14 px) 193.5, 194.4, 279.0; black sheen identical at any sheen roughness. `build/rel/test_output/sheen_*.png` checked by eye.
+- `victus_gpu_tests -tc="gpu clear coat*"` unchanged (peaks 117 / 226 / 174).
+- Full `ctest -j2` (48 suites): 47 passed on the first run; `victus_docs_lint` failed on the earlier ADR-0226 to ADR-0230 missing from CHANGELOG.md, fixed in this commit with a Changed entry (`python3 tools/lint/check_docs.py` passes).
+- Not verified: physical GPUs, Metal, GLES device runs (the ESSL output compiled through the shader tool only).
+- Next task: anisotropic specular (`KHR_materials_anisotropy`) for brushed metal and hair, then subsurface scattering for skin.
