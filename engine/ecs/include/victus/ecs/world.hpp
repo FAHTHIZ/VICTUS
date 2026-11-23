@@ -239,6 +239,10 @@ public:
     // Entity currently stored at `index`, regardless of generation (null if free).
     [[nodiscard]] Entity entity_at(std::uint32_t index) const noexcept;
     [[nodiscard]] std::size_t alive_count() const noexcept { return alive_; }
+    // Bumped by every operation that can relocate component storage (an entity changing
+    // archetype, destroy, clear). While it is unchanged, component pointers stay valid, so
+    // systems may cache them across frames (Scene::update_transforms does, ADR-0226).
+    [[nodiscard]] std::uint64_t structural_version() const noexcept { return structural_version_; }
     void clear();
 
     template <typename T, typename... Args>
@@ -356,6 +360,7 @@ private:
     std::vector<Record> records_;
     std::vector<std::uint32_t> free_;
     std::size_t alive_{0};
+    std::uint64_t structural_version_{0};
     std::vector<std::unique_ptr<Archetype>> archetypes_;
     std::unordered_map<Signature, Archetype*> by_signature_;
     std::unordered_map<QueryDesc, QueryCache, DescHash> queries_;

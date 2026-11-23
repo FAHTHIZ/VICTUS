@@ -19,3 +19,4 @@ These notes are point-in-time research and audits. Each one records its date and
 - [PROFILING_AND_MOVEMENT_RESEARCH_2026_11.md](PROFILING_AND_MOVEMENT_RESEARCH_2026_11.md): profilers and character movement.
 - [AUDIO_RESEARCH_2026_11.md](AUDIO_RESEARCH_2026_11.md): audio.
 - [GAME_UI_RESEARCH_2026_11.md](GAME_UI_RESEARCH_2026_11.md): in-game UI.
+- [CPU_FRAME_ARCHITECTURE_VS_UNITY_UNREAL.md](CPU_FRAME_ARCHITECTURE_VS_UNITY_UNREAL.md): why the CPU side of a VICTUS frame trails Unity and Unreal (retained, change-driven work), and the ordered fixes (ADR-0226 onward).

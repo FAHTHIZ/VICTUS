@@ -102,6 +102,75 @@ TEST_CASE("scene: world transforms propagate parent before child") {
     CHECK(near(s.world().get<Transform>(grandchild)->scale, {2, 2, 2}));
 }
 
+TEST_CASE("scene: update_transforms skips unchanged subtrees but tracks every change") {
+    Scene s;
+    const Entity root = s.create("root");
+    const Entity child = s.create("child", root);
+    const Entity leaf = s.create("leaf", child);
+    const Entity other = s.create("other");
+    s.world().get<Transform>(child)->position = {0, 1, 0};
+    s.world().get<Transform>(leaf)->position = {1, 0, 0};
+    s.world().get<Transform>(other)->position = {0, 0, 5};
+    const auto pos = [&](Entity e) { return s.world().get<WorldTransform>(e)->matrix.transform_point({}); };
+    s.update_transforms();
+    CHECK(near(pos(leaf), {1, 1, 0}));
+    s.update_transforms(); // nothing changed: results identical
+    CHECK(near(pos(leaf), {1, 1, 0}));
+
+    // An ancestor edit propagates to unchanged descendants.
+    s.world().get<Transform>(root)->position = {10, 0, 0};
+    s.update_transforms();
+    CHECK(near(pos(child), {10, 1, 0}));
+    CHECK(near(pos(leaf), {11, 1, 0}));
+    CHECK(near(pos(other), {0, 0, 5}));
+
+    // Unrelated structural changes relocate component storage; cached pointers must follow.
+    s.world().add<CameraComponent>(child);
+    const Entity spare = s.create("spare");
+    s.world().get<Transform>(leaf)->position = {1, 0, 1};
+    s.update_transforms();
+    CHECK(near(pos(leaf), {11, 1, 1}));
+    s.world().remove<CameraComponent>(child);
+    s.destroy(spare);
+    s.world().get<Transform>(leaf)->position = {1, 0, 0};
+    s.update_transforms();
+    CHECK(near(pos(leaf), {11, 1, 0}));
+
+    // A leaf-only edit.
+    s.world().get<Transform>(leaf)->scale = {3, 3, 3};
+    s.world().get<Transform>(leaf)->position = {2, 0, 0};
+    s.update_transforms();
+    CHECK(near(pos(leaf), {12, 1, 0}));
+    CHECK(near(s.world().get<WorldTransform>(leaf)->matrix.transform_vector({1, 0, 0}), {3, 0, 0}));
+
+    // Reparenting without keep_world: the unchanged local is now relative to the new parent.
+    CHECK(s.set_parent(child, other));
+    s.update_transforms();
+    CHECK(near(pos(child), {0, 1, 5}));
+    CHECK(near(pos(leaf), {2, 1, 5}));
+
+    // Removing the local Transform makes the entity follow its parent.
+    s.world().remove<Transform>(child);
+    s.update_transforms();
+    CHECK(near(pos(child), {0, 0, 5}));
+    CHECK(near(pos(leaf), {2, 0, 5}));
+
+    // A recycled entity slot never inherits a stale cached matrix.
+    s.destroy(root);
+    const Entity fresh = s.create("fresh");
+    s.world().get<Transform>(fresh)->position = {0, 7, 0};
+    s.update_transforms();
+    CHECK(near(pos(fresh), {0, 7, 0}));
+
+    // clear() drops the cache with the world.
+    s.clear();
+    const Entity again = s.create("again");
+    s.world().get<Transform>(again)->position = {4, 0, 0};
+    s.update_transforms();
+    CHECK(near(pos(again), {4, 0, 0}));
+    CHECK(near(s.world_matrix(again).transform_point({}), {4, 0, 0}));
+}
+
 TEST_CASE("scene: save/load round trip is lossless and stable") {
     Scene s;
     s.name = "Round Trip";

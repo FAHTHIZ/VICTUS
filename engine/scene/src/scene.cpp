@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <format>
 
 namespace victus::scene {
@@ -326,6 +327,7 @@ Entity Scene::create(std::string_view entity_name, Entity parent_entity, Uuid id
 }
 
 void Scene::link_child(Entity p, Entity child) {
+    ++hierarchy_version_;
     Hierarchy* h = world_.get<Hierarchy>(child);
     VICTUS_ASSERT(h, "scene entity without Hierarchy");
     h->parent = p;
@@ -347,6 +349,7 @@ void Scene::link_child(Entity p, Entity child) {
 }
 
 void Scene::unlink(Entity child) {
+    ++hierarchy_version_;
     Hierarchy* h = world_.get<Hierarchy>(child);
     if (!h) return;
     Entity* first = &first_root_;
@@ -548,24 +551,88 @@ math::Mat4 Scene::world_matrix(Entity e) const {
     return m;
 }
 
-void Scene::update_transforms() {
+// update_transforms compares Transforms bytewise: they must have no padding.
+static_assert(std::is_trivially_copyable_v<Transform> && sizeof(Transform) == 10 * sizeof(float));
+
+void Scene::rebuild_transform_order() {
+    // Carry snapshots over by entity so a hierarchy edit elsewhere (a spawn, a reparent) does
+    // not force a full recompute. A snapshot is reused only under the same parent.
+    const auto parent_bits = [&](const FlatTransform& f) {
+        return f.parent >= 0 ? flat_[static_cast<std::size_t>(f.parent)].e.bits() : kNullEntity.bits();
+    };
+    std::unordered_map<std::uint64_t, std::pair<TransformSnapshot, std::uint64_t>> previous;
+    previous.reserve(flat_.size());
+    for (std::size_t i = 0; i < flat_.size(); ++i)
+        if (snapshots_[i].valid) previous.emplace(flat_[i].e.bits(), std::pair{snapshots_[i], parent_bits(flat_[i])});
+    flat_.clear();
     stack_.clear();
-    for (Entity r = last_root_; !r.is_null(); r = world_.get<Hierarchy>(r)->prev_sibling) stack_.emplace_back(r, math::Mat4{});
+    for (Entity r = last_root_; !r.is_null(); r = world_.get<Hierarchy>(r)->prev_sibling) stack_.emplace_back(r, -1);
     while (!stack_.empty()) {
-        const auto [e, parent_matrix] = stack_.back();
+        const auto [e, parent_slot] = stack_.back();
         stack_.pop_back();
-        const Transform* t = world_.get<Transform>(e);
-        const math::Mat4 m = t ? parent_matrix * t->matrix() : parent_matrix;
-        if (WorldTransform* wt = world_.get<WorldTransform>(e)) wt->matrix = m;
-        else world_.add<WorldTransform>(e, m);
+        const auto slot = static_cast<std::int32_t>(flat_.size());
+        flat_.push_back({e, parent_slot, nullptr, nullptr});
         const Hierarchy* h = world_.get<Hierarchy>(e);
-        for (Entity c = h->last_child; !c.is_null(); c = world_.get<Hierarchy>(c)->prev_sibling) stack_.emplace_back(c, m);
+        for (Entity c = h->last_child; !c.is_null(); c = world_.get<Hierarchy>(c)->prev_sibling) stack_.emplace_back(c, slot);
+    }
+    snapshots_.assign(flat_.size(), TransformSnapshot{});
+    for (std::size_t i = 0; i < flat_.size(); ++i)
+        if (const auto it = previous.find(flat_[i].e.bits()); it != previous.end() && it->second.second == parent_bits(flat_[i]))
+            snapshots_[i] = it->second.first;
+    changed_.assign(flat_.size(), 0);
+    flat_hierarchy_version_ = hierarchy_version_;
+    refresh_transform_pointers();
+}
+
+void Scene::refresh_transform_pointers() {
+    // Adding WorldTransform moves entities between archetypes: add every missing one first,
+    // then take pointers once storage is stable.
+    for (std::size_t i = 0; i < flat_.size(); ++i) {
+        const Entity e = flat_[i].e;
+        if (!world_.has<WorldTransform>(e)) {
+            world_.add<WorldTransform>(e);
+            snapshots_[i].valid = false;
+        }
+    }
+    for (auto& f : flat_) {
+        f.local = world_.get<Transform>(f.e);
+        f.world = world_.get<WorldTransform>(f.e);
+    }
+    flat_world_version_ = world_.structural_version();
+}
+
+// Snapshots compare Transforms bytewise: they must have no padding.
+static_assert(std::is_trivially_copyable_v<Transform> && sizeof(Transform) == 10 * sizeof(float));
+
+void Scene::update_transforms() {
+    // Unity's TransformHierarchy keeps transforms of one hierarchy packed in parent-first order
+    // with dirty bits set by its setters. VICTUS exposes Transform as a plain mutable component,
+    // so change detection compares each local value with the snapshot that produced the cached
+    // world matrix; the packed order and pointers are cached until the structure changes.
+    if (flat_hierarchy_version_ != hierarchy_version_) rebuild_transform_order();
+    else if (flat_world_version_ != world_.structural_version()) refresh_transform_pointers();
+    const std::size_t n = flat_.size();
+    for (std::size_t i = 0; i < n; ++i) {
+        const FlatTransform& f = flat_[i];
+        TransformSnapshot& snap = snapshots_[i];
+        const WorldTransform* pw = f.parent >= 0 ? flat_[static_cast<std::size_t>(f.parent)].world : nullptr;
+        const bool changed = (f.parent >= 0 && changed_[static_cast<std::size_t>(f.parent)]) || !snap.valid ||
+                             snap.has_local != (f.local != nullptr) ||
+                             (f.local && std::memcmp(&snap.local, f.local, sizeof(Transform)) != 0);
+        changed_[i] = changed ? 1 : 0;
+        if (!changed) continue;
+        if (f.local) f.world->matrix = pw ? pw->matrix * f.local->matrix() : f.local->matrix();
+        else f.world->matrix = pw ? pw->matrix : math::Mat4{};
+        snap.valid = true;
+        snap.has_local = f.local != nullptr;
+        if (f.local) std::memcpy(&snap.local, f.local, sizeof(Transform));
     }
 }
 
 void Scene::clear() {
     world_.clear();
     by_uuid_.clear();
+    ++hierarchy_version_;
     first_root_ = last_root_ = kNullEntity;
 }
 

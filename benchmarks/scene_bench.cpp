@@ -79,7 +79,24 @@ int main(int argc, char** argv) {
             }
         }
         s.update_transforms();
+        // Static scene: nothing moved since the previous update.
         h.run("scene/update_transforms_10k", s.size(), [&] { s.update_transforms(); });
+        // Every root moves each frame, so every world matrix is recomputed.
+        const std::vector<scene::Entity> roots = s.roots();
+        float phase = 0;
+        h.run("scene/update_transforms_10k_all_moving", s.size(), [&] {
+            phase += 0.01f;
+            for (const auto r : roots) s.world().get<scene::Transform>(r)->position.y = phase;
+            s.update_transforms();
+        });
+        // Nothing moves, but a component is added or removed every frame (storage relocates).
+        bool tagged = false;
+        h.run("scene/update_transforms_10k_component_churn", s.size(), [&] {
+            if (tagged) s.world().remove<scene::CameraComponent>(roots[0]);
+            else s.world().add<scene::CameraComponent>(roots[0]);
+            tagged = !tagged;
+            s.update_transforms();
+        });
         json::Value doc;
         h.run("scene/save_10k", s.size(), [&] { doc = s.save(); });
         const std::string text = json::stringify(doc);

@@ -45,12 +45,16 @@ void JobSystem::submit(JobFn fn, Counter* counter, Priority priority) {
         std::lock_guard lock(q->mutex);
         q->jobs.push_back({std::move(fn), counter});
     }
-    queued_.fetch_add(1, std::memory_order_release);
-    {
-        // Lock pairs with the sleep predicate check to avoid lost wake-ups.
-        std::lock_guard lock(sleep_mutex_);
+    // seq_cst pairs with the sleeper's seq_cst increment of sleepers_ (Dekker): either the
+    // sleeper sees queued_ > 0 in its wait predicate, or we see it counted and wake it. Busy
+    // pools never touch the sleep mutex or issue a futex wake per job.
+    queued_.fetch_add(1, std::memory_order_seq_cst);
+    if (sleepers_.load(std::memory_order_seq_cst) > 0) {
+        {
+            std::lock_guard lock(sleep_mutex_);
+        }
+        sleep_cv_.notify_one();
     }
-    sleep_cv_.notify_one();
 }
 
 bool JobSystem::pop_local(std::uint32_t self, Job& out) {
@@ -107,9 +111,11 @@ void JobSystem::worker_main(std::uint32_t index) {
     while (running_.load(std::memory_order_acquire)) {
         if (try_run_one(index)) continue;
         std::unique_lock lock(sleep_mutex_);
+        sleepers_.fetch_add(1, std::memory_order_seq_cst);
         sleep_cv_.wait(lock, [&] {
-            return !running_.load(std::memory_order_acquire) || queued_.load(std::memory_order_acquire) > 0;
+            return !running_.load(std::memory_order_acquire) || queued_.load(std::memory_order_seq_cst) > 0;
         });
+        sleepers_.fetch_sub(1, std::memory_order_relaxed);
     }
 }
 
@@ -136,18 +142,35 @@ void JobSystem::parallel_for(std::size_t begin, std::size_t end, std::size_t gra
     if (end <= begin) return;
     grain = std::max<std::size_t>(grain, 1);
     const std::size_t count = end - begin;
-    const std::size_t max_chunks = static_cast<std::size_t>(worker_count() + 1) * 4;
+    const std::size_t threads = static_cast<std::size_t>(worker_count()) + 1;
+    // Several chunks per thread so uneven rows balance, but never below the caller's grain.
+    const std::size_t max_chunks = threads * 4;
     const std::size_t chunk = std::max(grain, (count + max_chunks - 1) / max_chunks);
     if (count <= chunk) {
         body(begin, end);
         return;
     }
+    const std::size_t chunks = (count + chunk - 1) / chunk;
+    // One shared cursor instead of one job per chunk: at most worker_count() helper jobs are
+    // queued and every participant claims chunks with a single fetch_add (the batch-claiming
+    // scheme of Unity's IJobParallelFor and Intel TBB's auto partitioner). The caller works too.
+    struct Range {
+        std::atomic<std::size_t> next;
+        std::size_t end;
+        std::size_t chunk;
+        const std::function<void(std::size_t, std::size_t)>* body;
+    } range{{begin}, end, chunk, &body};
+    const auto drain = [](Range& r) {
+        for (;;) {
+            const std::size_t s = r.next.fetch_add(r.chunk, std::memory_order_relaxed);
+            if (s >= r.end) return;
+            (*r.body)(s, std::min(r.end, s + r.chunk));
+        }
+    };
     Counter counter;
-    for (std::size_t s = begin + chunk; s < end; s += chunk) {
-        const std::size_t e = std::min(end, s + chunk);
-        submit([&body, s, e] { body(s, e); }, &counter, Priority::High);
-    }
-    body(begin, std::min(end, begin + chunk));
+    const std::size_t helpers = std::min<std::size_t>(worker_count(), chunks - 1);
+    for (std::size_t h = 0; h < helpers; ++h) submit([&range, &drain] { drain(range); }, &counter, Priority::High);
+    drain(range);
     wait(counter);
 }
 

@@ -84,6 +84,7 @@ private:
     std::mutex sleep_mutex_;
     std::condition_variable sleep_cv_;
     std::atomic<std::int64_t> queued_{0};
+    std::atomic<std::int32_t> sleepers_{0}; // workers blocked on sleep_cv_
     std::atomic<bool> running_{true};
     std::atomic<std::uint64_t> executed_{0};
     std::atomic<std::uint64_t> stolen_{0};

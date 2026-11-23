@@ -221,6 +221,7 @@ Entity World::create() {
 void World::destroy(Entity e) {
     VICTUS_ASSERT(!iterating(), "structural change during iteration; use World::commands()");
     if (!alive(e)) return;
+    ++structural_version_;
     Record& rec = records_[e.index];
     const Entity moved = rec.archetype->swap_remove(rec.row);
     if (!moved.is_null()) records_[moved.index].row = rec.row;
@@ -241,6 +242,7 @@ Entity World::entity_at(std::uint32_t index) const noexcept {
 
 void World::clear() {
     VICTUS_ASSERT(!iterating(), "structural change during iteration");
+    ++structural_version_;
     for (auto& arch : archetypes_) arch->clear();
     free_.clear();
     for (std::uint32_t i = static_cast<std::uint32_t>(records_.size()); i-- > 0;) {
@@ -256,6 +258,7 @@ void World::clear() {
 }
 
 std::uint32_t World::move_entity(Entity e, Record& rec, Archetype* to) {
+    ++structural_version_;
     Archetype* from = rec.archetype;
     const std::uint32_t new_row = to->push_uninitialized(e);
     for (std::size_t i = 0; i < to->ids().size(); ++i) {

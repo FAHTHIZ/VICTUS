@@ -3387,3 +3387,20 @@ Verified (2-core sandbox, lavapipe Vulkan):
 - Not verified: a high-resolution runtime close-up, Nova in the runtime renderer after these changes, physical GPUs.
 - Next task: Nova runtime close-up and a high-resolution runtime review (ADR-0225).
 
+
+## 2026-11-23 — Change-driven transform propagation and batch-claiming parallel_for (ADR-0226)
+
+Built:
+- Audit of the CPU side of a frame against Unity and Unreal: [docs/audits/CPU_FRAME_ARCHITECTURE_VS_UNITY_UNREAL.md](audits/CPU_FRAME_ARCHITECTURE_VS_UNITY_UNREAL.md).
+- `ecs::World::structural_version()`, bumped by archetype moves, destroy and clear.
+- `Scene::update_transforms`: cached parent-first flat order with component pointers (rebuilt on hierarchy edits, pointers refreshed on storage moves) and per-entity local-Transform snapshots; unchanged subtrees keep their matrices.
+- `JobSystem::parallel_for`: one shared atomic range, at most `worker_count()` helper jobs; `submit` wakes a worker only when one sleeps.
+- New benchmark cases `scene/update_transforms_10k_all_moving` and `scene/update_transforms_10k_component_churn`; new scene test covering ancestor and leaf edits, storage relocation, reparenting, Transform removal, recycled entity slots and `clear()`.
+
+Verified (2-vCPU sandbox, GCC 15.2, Release, `-DVICTUS_WITH_GRAPHICS=OFF`):
+- `cmake --build build/rel -j2 && ctest` in `build/rel`: 22/22; every headless doctest binary (`bin/victus_*_tests`, 20) reports SUCCESS; `victus_scene_tests` 17 cases, 278 assertions.
+- ThreadSanitizer Debug (`-DVICTUS_SANITIZE=thread`): `victus_core_tests`, `victus_ecs_tests`, `victus_scene_tests` pass twice each with no reports.
+- `victus_bench_scene --reps 40` p50, before (76e162d) → after: `scene/update_transforms_10k` (static) 0.562 → 0.033 ms; `scene/update_transforms_10k_all_moving` 0.158-0.251 ms (two runs; the old algorithm always recomputed everything, 0.56 ms); `scene/update_transforms_10k_component_churn` 0.178 ms.
+- `victus_bench_core --reps 40`, three alternating runs of the before and after binaries: `jobs/parallel_for_integrate_1M` allocations per call 7.6 → 0.075; p50 within ±20 % run-to-run noise on 2 vCPUs (0.40-0.51 vs 0.42-0.43 ms); `jobs/submit_wait_100k_empty` 40-44 vs 38-43 ms. A spin-before-sleep variant was measured slower here and dropped.
+- Not verified: graphics build (render, runtime, editor, animation tests) in this session; physical multi-core machines.
+- Next task: retained draw records for unchanged mesh renderers in scene extraction (CPU frame architecture item 3).

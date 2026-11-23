@@ -267,7 +267,10 @@ public:
     [[nodiscard]] Uuid uuid(Entity e) const noexcept;
     [[nodiscard]] std::size_t size() const noexcept { return by_uuid_.size(); }
 
-    // Recomputes WorldTransform for every entity, parents before children.
+    // Brings WorldTransform up to date for every entity, parents before children. Subtrees whose
+    // local Transforms, parents and ancestors are unchanged since the previous call keep their
+    // matrices (no TRS rebuild, no matrix product), so mostly static scenes cost a compare per
+    // entity instead of a recompute (ADR-0226).
     void update_transforms();
     [[nodiscard]] math::Mat4 world_matrix(Entity e) const;
 
@@ -319,7 +322,30 @@ private:
     ecs::World world_;
     std::unordered_map<Uuid, Entity, UuidHash> by_uuid_;
     Entity first_root_, last_root_;
-    std::vector<std::pair<Entity, math::Mat4>> stack_;
+    // update_transforms state (ADR-0226). The depth-first order is flattened once into `flat_`
+    // with each entry's parent slot and direct component pointers, and reused until the
+    // hierarchy or the world's component storage changes. `snapshots_` holds, per slot, the
+    // local Transform that produced the current WorldTransform, so unchanged subtrees are
+    // skipped with a 40-byte compare instead of a TRS rebuild and matrix product.
+    struct FlatTransform {
+        Entity e;
+        std::int32_t parent{-1}; // slot of the parent in flat_ (-1: root)
+        const Transform* local{nullptr};
+        WorldTransform* world{nullptr};
+    };
+    struct TransformSnapshot {
+        Transform local;
+        bool valid{false};     // matrix was computed from `local` (or from no Transform)
+        bool has_local{false};
+    };
+    void rebuild_transform_order();
+    void refresh_transform_pointers();
+    std::vector<FlatTransform> flat_;
+    std::vector<TransformSnapshot> snapshots_;
+    std::vector<std::uint8_t> changed_;
+    std::vector<std::pair<Entity, std::int32_t>> stack_;
+    std::uint64_t flat_hierarchy_version_{~0ull}, flat_world_version_{~0ull};
+    std::uint64_t hierarchy_version_{0};
     std::vector<std::string> migrations_;
 };
 
