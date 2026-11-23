@@ -2544,3 +2544,17 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 **Evidence:** `victus_gpu_tests -tc="gpu subsurface*"` (Vulkan lavapipe) and `victus_asset_tests -tc="*subsurface*,*diffuse_transmission*"`; numbers are in STATUS.md for the commit.
 
 **Consequences:** Two extra terms per light and one environment sample where the colour is not black (a per-draw uniform branch, no cost otherwise); the sun pays one more cascade lookup. Rectangle area lights (ADR-0194) light the base only. Thickness is a per-material constant: thickness maps (and the glTF transmission textures) are not imported, and local-light transmission is not shadowed from the far side. Wide-radius diffusion across a face (blurred pores and freckles) needs the screen-space pass above.
+
+### ADR-0234: AgX tonemapper
+
+**Status:** Accepted (2026-11-23).
+
+**Context:** VICTUS offered the Narkowicz ACES fit (default), Khronos PBR Neutral and luminance Reinhard. The ACES fit is applied per channel, so saturated over-range colours (fire, neon, sunsets, emissive signage, bright skin under strong light) skew in hue towards yellow, cyan or magenta and clip to flat primaries instead of desaturating towards white the way film and camera sensors do. AgX (Troy Sobotka) is the default view transform in Blender 4 and is shipped by Godot 4.4 and three.js for this reason; it is now the common reference look for photoreal content authored in Blender.
+
+**Decision:** `render::Tonemapper::Agx` and the matching `EnvironmentComponent` value (`"tonemapper": "agx"` in scenes, selectable in the Environment inspector through reflection). `tonemap.frag` implements Benjamin Wrensch's analytic AgX, as Godot and three.js do: Rec.709 linear into the AgX inset space, log2 encoding over [-12.47, 4.03] EV, the default-contrast sigmoid as a 6th-order polynomial, the outset matrix and the 2.2 display transfer back to display-linear, after which the existing grading, vignette, grain and sRGB encoding apply unchanged. ACES stays the default, so existing scenes look the same.
+
+**Alternatives:** (1) The full AgX OCIO configuration with a 3D LUT: exact, but a LUT texture and an OCIO bake step; the polynomial is the form other real-time engines ship. (2) AgX "Punchy" / "Golden" looks: a saturation and contrast tweak that the existing grading controls already approximate. (3) Making AgX the default: changes every existing scene's look; left to projects.
+
+**Evidence:** `victus_gpu_tests -tc="gpu quality: tonemappers*"`; numbers are in STATUS.md for the commit.
+
+**Consequences:** One more branch in the tonemap pass, no cost for the other curves. Probe captures stay linear (the tonemapper is not applied there). AgX output is slightly lower in contrast than the ACES fit; projects that switch may want the existing contrast control.

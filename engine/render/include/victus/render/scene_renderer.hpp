@@ -394,7 +394,9 @@ struct WaterSurface {
 };
 inline constexpr std::size_t kMaxWaterSurfaces = 16;
 
-enum class Tonemapper : std::uint8_t { None, Aces, Neutral, Reinhard };
+// Agx (ADR-0234): Troy Sobotka's AgX view (Blender 4, Godot 4.4, three.js), which desaturates
+// bright highlights towards white instead of skewing their hue like the ACES fit.
+enum class Tonemapper : std::uint8_t { None, Aces, Neutral, Reinhard, Agx };
 [[nodiscard]] std::string_view tonemapper_name(Tonemapper t) noexcept;
 [[nodiscard]] std::optional<Tonemapper> parse_tonemapper(std::string_view name) noexcept;
 

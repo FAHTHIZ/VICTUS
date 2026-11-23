@@ -468,7 +468,7 @@ TEST_CASE("gpu quality: tonemappers and grading") {
         return render_frame(*sr.value(), s, cam, sun, e, content).at(96, 64);
     };
     const auto none = centre(Tonemapper::None), aces = centre(Tonemapper::Aces), neutral = centre(Tonemapper::Neutral),
-               reinhard = centre(Tonemapper::Reinhard);
+               reinhard = centre(Tonemapper::Reinhard), agx = centre(Tonemapper::Agx);
     CHECK(channel(none, 0) == 255); // clamp only
     CHECK(channel(none, 1) == 255);
     CHECK(channel(aces, 0) > channel(aces, 1));
@@ -476,6 +476,21 @@ TEST_CASE("gpu quality: tonemappers and grading") {
     CHECK(channel(reinhard, 0) > channel(reinhard, 2));
     CHECK(aces != neutral);
     CHECK(neutral != reinhard);
+    // AgX (ADR-0234): the over-range orange lamp (4, 1, 0.25) keeps its hue order and stays
+    // closer to its hue than the ACES fit, whose per-channel curve skews it towards yellow:
+    // (g - b) / (r - b) is 0.2 at the source, lower for AgX than for ACES.
+    MESSAGE("lamp rgb aces " << int(channel(aces, 0)) << " " << int(channel(aces, 1)) << " " << int(channel(aces, 2)) << ", agx "
+                             << int(channel(agx, 0)) << " " << int(channel(agx, 1)) << " " << int(channel(agx, 2)));
+    CHECK(channel(agx, 0) > channel(agx, 1));
+    CHECK(channel(agx, 1) > channel(agx, 2));
+    const auto skew = [&](const auto& px) {
+        return double(int(channel(px, 1)) - int(channel(px, 2))) / std::max(1, int(channel(px, 0)) - int(channel(px, 2)));
+    };
+    CHECK(skew(agx) < skew(aces) - 0.1);
+    CHECK(agx != aces);
+    CHECK(agx != neutral);
+    CHECK(parse_tonemapper("agx") == Tonemapper::Agx);
+    CHECK(tonemapper_name(Tonemapper::Agx) == "agx");
     const auto grey = centre(Tonemapper::Aces, 0.0f);
     CHECK(std::abs(int(channel(grey, 0)) - int(channel(grey, 1))) <= 1);
     CHECK(std::abs(int(channel(grey, 1)) - int(channel(grey, 2))) <= 1);

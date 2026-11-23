@@ -3566,3 +3566,16 @@ Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, Mesa lavapipe Vulkan, `SD
 - Full `ctest -j2`: 47/48 passed; `victus_perf_budgets` failed under the parallel load and passed when re-run alone (86 s; worst frame p95 195.6 ms against its 400 ms ceiling).
 - Not verified: physical GPUs, Metal, GLES device runs; sun transmission through a shadow-casting thin card.
 - Next task: AgX tonemapper (Blender/Godot/three.js filmic view with better highlight desaturation than the ACES fit).
+
+## 2026-11-23 — AgX tonemapper (ADR-0234)
+
+Built:
+- `render::Tonemapper::Agx` / `EnvironmentComponent::Tonemapper::Agx` (`"agx"`), `tonemapper_name` / `parse_tonemapper`; `tonemap.frag` analytic AgX (inset matrix, log2 over [-12.47, 4.03] EV, 6th-order sigmoid fit, outset matrix, 2.2 display transfer).
+- Test: `gpu quality: tonemappers and grading` extended with AgX.
+
+Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, Mesa lavapipe Vulkan):
+- `python3 tools/shaders/compile_shaders.py` regenerated tonemap.frag (64 shaders); `--check` up to date.
+- `victus_gpu_tests -tc="gpu quality: tonemappers*"`: HDR lamp (4, 1, 0.25) displays as rgb 252/232/165 with ACES and 246/206/165 with AgX; (g - b) / (r - b) is 0.77 for ACES and 0.51 for AgX against 0.2 at the source (AgX skews the hue less).
+- The curve on grey (computed from the same polynomial): 0.01 to 0.006, 0.18 to 0.215, 1 to 0.59, 4 to 0.861, 16 to 0.995 display-linear.
+- Full `ctest -j2`: 48/48 passed.
+- Next task: IES light profiles for point and spot lights (GAP-13 remainder).

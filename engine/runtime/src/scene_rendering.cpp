@@ -1374,6 +1374,7 @@ void GpuAssetCache::evict_lightmaps() {
 
 static_assert(static_cast<int>(gameplay::EnvironmentComponent::Tonemapper::Reinhard) ==
               static_cast<int>(render::Tonemapper::Reinhard));
+static_assert(static_cast<int>(gameplay::EnvironmentComponent::Tonemapper::Agx) == static_cast<int>(render::Tonemapper::Agx));
 static_assert(static_cast<int>(gameplay::EnvironmentComponent::Tonemapper::Neutral) ==
               static_cast<int>(render::Tonemapper::Neutral));
 

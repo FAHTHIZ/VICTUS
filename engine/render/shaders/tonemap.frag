@@ -1,7 +1,7 @@
 #version 450
 // SPDX-License-Identifier: Apache-2.0
 // Final HDR resolve: bloom composite, manual or automatic exposure, tonemapping (ACES fit,
-// Khronos PBR Neutral or luminance Reinhard), contrast/saturation grading, vignette and sRGB
+// Khronos PBR Neutral, luminance Reinhard or AgX), contrast/saturation grading, vignette and sRGB
 // encoding. With FXAA enabled the output is always sRGB-encoded with luma in alpha.
 // Optional camera-lens imperfections (ADR-0146): barrel distortion, lateral chromatic aberration
 // and luminance-weighted sensor grain. All three are off (exactly the old path) at zero.
@@ -10,7 +10,7 @@ layout(set = 2, binding = 0) uniform sampler2D u_hdr;
 layout(set = 2, binding = 1) uniform sampler2D u_bloom;
 layout(set = 2, binding = 2) uniform sampler2D u_exposure;
 layout(set = 3, binding = 0) uniform Post {
-    vec4 params;  // x: exposure, y: vignette, z: encode sRGB, w: tonemapper (0 none, 1 ACES, 2 neutral, 3 Reinhard)
+    vec4 params;  // x: exposure, y: vignette, z: encode sRGB, w: tonemapper (0 none, 1 ACES, 2 neutral, 3 Reinhard, 4 AgX)
     vec4 params2; // x: bloom intensity, y: auto exposure, z: exposure compensation (linear), w: saturation
     vec4 params3; // x: contrast, y: luma in alpha (FXAA input), z: linear HDR output (probe captures)
     vec4 params4; // x: lens distortion (barrel > 0), y: chromatic aberration, z: film grain, w: frame seed
@@ -32,6 +32,29 @@ vec3 pbr_neutral(vec3 c) {
     c *= new_peak / peak;
     float g = 1.0 - 1.0 / (desat * (peak - new_peak) + 1.0);
     return mix(c, vec3(new_peak), g);
+}
+// AgX (Troy Sobotka; ADR-0234), in Benjamin Wrensch's analytic form used by Godot and three.js:
+// Rec.709 into the AgX inset space, log2 encoding over [-12.47, 4.03] EV around middle grey,
+// the sigmoid as a 6th-order polynomial fit, back out of the inset space and through the 2.2
+// display transfer to display-linear (the sRGB encode below then applies as for the others).
+vec3 agx_contrast(vec3 x) {
+    vec3 x2 = x * x;
+    vec3 x4 = x2 * x2;
+    return 15.5 * x4 * x2 - 40.14 * x4 * x + 31.96 * x4 - 6.868 * x2 * x + 0.4298 * x2 + 0.1191 * x - 0.00232;
+}
+vec3 agx(vec3 c) {
+    const mat3 inset = mat3(0.842479062253094, 0.0423282422610123, 0.0423756549057051,
+                            0.0784335999999992, 0.878468636469772, 0.0784336,
+                            0.0792237451477643, 0.0791661274605434, 0.879142973793104);
+    const mat3 outset = mat3(1.19687900512017, -0.0528968517574562, -0.0529716355144438,
+                             -0.0980208811401368, 1.15190312990417, -0.0980434501171241,
+                             -0.0990297440797205, -0.0989611768448433, 1.15107367264116);
+    const float min_ev = -12.47393, max_ev = 4.026069;
+    c = inset * max(c, vec3(0.0));
+    c = clamp(log2(max(c, vec3(1e-10))), min_ev, max_ev);
+    c = agx_contrast((c - min_ev) / (max_ev - min_ev));
+    c = outset * c;
+    return pow(max(c, vec3(0.0)), vec3(2.2));
 }
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 vec3 reinhard(vec3 c) {
@@ -82,6 +105,7 @@ void main() {
     if (op == 1) c = aces(c);
     else if (op == 2) c = pbr_neutral(c);
     else if (op == 3) c = reinhard(c);
+    else if (op == 4) c = agx(c);
     c = clamp(c, 0.0, 1.0);
     // Grading in display-linear space around middle grey.
     float l = luma(c);

@@ -595,12 +595,13 @@ std::string_view tonemapper_name(Tonemapper t) noexcept {
     case Tonemapper::Aces: return "aces";
     case Tonemapper::Neutral: return "neutral";
     case Tonemapper::Reinhard: return "reinhard";
+    case Tonemapper::Agx: return "agx";
     }
     return "aces";
 }
 
 std::optional<Tonemapper> parse_tonemapper(std::string_view n) noexcept {
-    for (Tonemapper t : {Tonemapper::None, Tonemapper::Aces, Tonemapper::Neutral, Tonemapper::Reinhard})
+    for (Tonemapper t : {Tonemapper::None, Tonemapper::Aces, Tonemapper::Neutral, Tonemapper::Reinhard, Tonemapper::Agx})
         if (tonemapper_name(t) == n) return t;
     return std::nullopt;
 }

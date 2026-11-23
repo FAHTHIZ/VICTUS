@@ -281,7 +281,7 @@ struct MaterialOverridesComponent {
 // Scene-wide look: sky/ambient lighting and post-processing controls. The first entity with
 // this component drives the scene's environment; quality tiers decide which effects run.
 struct EnvironmentComponent {
-    enum class Tonemapper : std::uint8_t { None, Aces, Neutral, Reinhard };
+    enum class Tonemapper : std::uint8_t { None, Aces, Neutral, Reinhard, Agx };
     math::Color sky_zenith{0.18f, 0.36f, 0.75f, 1};
     math::Color sky_horizon{0.62f, 0.72f, 0.85f, 1};
     math::Color ground{0.22f, 0.2f, 0.18f, 1};

@@ -305,7 +305,7 @@ void register_components() {
             .field(&E::ambient_intensity, "ambient_intensity", {.min = 0, .max = 16, .speed = 0.01f})
             .field(&E::draw_sky, "draw_sky")
             .field(&E::clear_color, "clear_color", {.tooltip = "Background when the sky is not drawn"})
-            .enumeration(&E::tonemapper, "tonemapper", {"none", "aces", "neutral", "reinhard"})
+            .enumeration(&E::tonemapper, "tonemapper", {"none", "aces", "neutral", "reinhard", "agx"})
             .field(&E::exposure, "exposure", {.min = 0.001f, .max = 1000, .speed = 0.01f, .tooltip = "Manual exposure multiplier"})
             .field(&E::exposure_compensation, "exposure_compensation", {.min = -10, .max = 10, .speed = 0.05f, .tooltip = "EV stops"})
             .field(&E::auto_exposure, "auto_exposure", {.tooltip = "Eye adaptation to the scene's average brightness"})
