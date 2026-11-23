@@ -3859,3 +3859,25 @@ Not covered:
   - Studio and the launcher have no helmet choice yet.
   - MakeHuman's `mouthFrown` pose units are lopsided at the source: about 28 % more vertices on one side.
 - Next: hair shape and shading, then the material details above.
+
+## 2026-11-24 — Nova's bob: jaw-length face framing, swept fringe and sharper sheen (ADR-0247 follow-up)
+
+Second pass on Nova's bare-head hair against the sheet's head-detail panel (`tools/characters/human.py`).
+- Shape:
+  - The sides now fall to the jaw in front of the ear. The tuck behind the ear starts at 82° (previously 66°), and the taper toward the chin is 3 % (previously 7 %), so the bob hugs the face instead of flaring.
+  - The fringe is lower and sweeps toward the character's right. The outer layer's fringe cards are narrower.
+  - The hem is choppier: a low-frequency "chop" term of 5-11 cycles around the head, plus per-card jitter, some fringe pieces cut short and a few left long. Loose tips drift sideways.
+  - The three card layers are offset 4.8-11 mm from the scalp.
+- Shading: roughness is 0.40 (previously 0.50) and anisotropy 0.70 (previously 0.55). The highlight is now a narrower, brighter band, so the near-black hair reads glossy rather than grey.
+
+Verified (2-vCPU sandbox, GCC 15.2, Release, Xvfb + lavapipe):
+- Full-quality Nova build: 21.60 MB, 282,208 triangles (168,608 drawn with the helmet, 239,952 bare-headed), 628 s. The arena copy was updated, and the CHARACTERS.md table and `docs/images/characters/blender_render_{bodies,heads}.jpg` were regenerated.
+- `tools/characters/test_pipeline.py`: 14/14 passed.
+- `victus_asset_tests`: passed (641,003 assertions).
+- `victus_gpu_tests "gpu expressions*,gpu character*"`: passed.
+- `ctest -R "perf_budgets|determinism|sample_arena|docs_lint|template"`: 4/4 passed, with no budget changes needed.
+
+Open:
+- The sheet's fringe is softer and more see-through. Overlapping card layers still hide most of the short pieces, so the fringe reads as a solid edge.
+- Skin is paler and less warm than the sheet.
+- Nova's black shoulder and underarm panels are not modelled yet, and Orion has no carbon-weave detail.

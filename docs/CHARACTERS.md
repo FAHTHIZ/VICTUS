@@ -20,8 +20,8 @@ sockets and clips are unchanged, so existing projects keep their references.
 | Look | near-black glossy armour over a black composite undersuit, dark steel hardware, a red-tinted visor with red slit eyes, a satin silver V on the chest | white armour over a black high-cut leotard with black collar, gloves and flex zones, silver hardware, ice-blue light, a black V; bare head: dark side-swept bob |
 | Head (default) | helmet on (`--helmet off` for the bare head: a close dark crop) | bare head (`--helmet on` for the white helmet with the black visor) |
 | Height (floor to the top of the taller head variant) | 1.79 m | 1.71 m |
-| Triangles (LOD 0, as exported: both heads / drawn with the helmet / drawn bare-headed) | 221,216 / 172,752 / 179,120 | 279,072 / 168,608 / 236,816 |
-| GLB size | 17.74 MB | 21.46 MB |
+| Triangles (LOD 0, as exported: both heads / drawn with the helmet / drawn bare-headed) | 221,216 / 172,752 / 179,120 | 282,208 / 168,608 / 239,952 |
+| GLB size | 17.74 MB | 21.60 MB |
 
 Both stand on Y = 0, face +Z with their left on +X, and are authored in the A-pose the earlier
 characters used (arms 40 degrees from vertical), so existing clips and ragdoll setups line up.

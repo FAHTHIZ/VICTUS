@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """The unhelmeted look of the Frame characters: a real human head under the helmet
-(docs/CHARACTERS.md#helmet-variants, ADR-0247).
+(docs/CHARACTERS.md#head-variants, ADR-0247).
 
 The ORION & NOVA design sheet shows Nova's face and her black bob, and Orion behind a closed
 helmet; both characters can now be shown either way. Every part below is an extra glTF primitive
@@ -61,7 +61,7 @@ HEAD_STYLES = {
     # Nova (the sheet's head close-up): fair East Asian skin, dark brown eyes, glossy black bob.
     "nova": HeadStyle(skin=(0.40, 0.255, 0.18), lips=(0.34, 0.15, 0.13), iris=(0.055, 0.030, 0.016),
                       hair=(0.0085, 0.0085, 0.0100), hair_style="bob", stubble=0.0, freckles=0.0, brow_thickness=0.78,
-                      hair_rough=0.50, hair_anisotropy=0.55, lip_size=0.80),
+                      hair_rough=0.40, hair_anisotropy=0.70, lip_size=0.80),
 }
 
 # Card tiles: the top CARD_REGION of the Hair atlas holds TILES strand tiles stacked in v.
@@ -219,7 +219,8 @@ def bob_strands(env: Envelope, J, chin_z, seed=3):
     ez = eye[2]
     pole = _unit([0.0, 0.32, 1.0])  # the crown whorl, a little behind the top of the head
     ear_top = ez + 0.010
-    layers = ((0.0130, 124, 0.005, 0.0120), (0.0095, 100, 0.30, 0.0115), (0.0060, 80, 0.55, 0.0110))
+    # Closer to the scalp than a helmet-like bowl (the sheet's bob is soft and sleek on top).
+    layers = ((0.0110, 132, 0.005, 0.0120), (0.0078, 104, 0.30, 0.0115), (0.0048, 84, 0.55, 0.0110))
     out = []
 
     def cut_z(az):
@@ -228,15 +229,24 @@ def bob_strands(env: Envelope, J, chin_z, seed=3):
         # Bangs to the brows (a little longer toward the temples), face-framing locks to the jaw,
         # the bob to the chin all round, a touch shorter at the nape.
         # (Side-swept: a little longer toward her right.)
-        bang = ez + 0.013 - 0.008 * (a / 50.0) ** 2 - 0.004 * np.clip(-sa / 50.0, -1, 1)
-        lock = chin_z + 0.030
-        side = chin_z + 0.004
+        bang = ez + 0.007 - 0.008 * (a / 50.0) ** 2 - 0.007 * np.clip(-sa / 50.0, -1, 1)
+        lock = chin_z + 0.016
+        side = chin_z + 0.002
         back = chin_z + 0.014
-        z = np.where(a < 48, bang,
-                     np.where(a < 58, bang + (lock - bang) * _smooth((a - 48) / 10.0),
-                              np.where(a < 120, lock + (side - lock) * _smooth((a - 58) / 40.0),
+        z = np.where(a < 46, bang,
+                     np.where(a < 56, bang + (lock - bang) * _smooth((a - 46) / 10.0),
+                              np.where(a < 120, lock + (side - lock) * _smooth((a - 56) / 40.0),
                                        side + (back - side) * _smooth((a - 120) / 60.0))))
         return z
+
+    # Piecey hem: low-frequency clumps of shorter and longer pieces around the head (the sheet's
+    # choppy cut), gentler on the bangs.
+    ks = np.arange(5, 12)
+    camp = rng.uniform(0.0012, 0.0026, len(ks))
+    cph = rng.random(len(ks)) * 2 * np.pi
+
+    def chop(az):
+        return float((camp * np.sin(ks * az + cph)).sum())
 
     def meridian(az, off, th0):
         w = _az_dir(np.array(az))
@@ -270,7 +280,11 @@ def bob_strands(env: Envelope, J, chin_z, seed=3):
             M = meridian(a, off + rng.normal(0, 0.0012), th0)
             rel = M - c
             rho = np.linalg.norm(rel[:, :2], axis=1)
-            zc = cut_z(np.array(a)) + rng.normal(0, 0.0038 if a_deg < 50 else 0.0035)
+            zc = cut_z(np.array(a)) + rng.normal(0, 0.0055 if a_deg < 50 else 0.0035) + chop(a) * (0.8 if a_deg < 50 else 1.0)
+            if a_deg < 46:
+                # Wispy fringe: some pieces cut short (forehead shows through), a few left long.
+                r_ = rng.random()
+                zc += rng.uniform(0.007, 0.014) if r_ < 0.22 else (-rng.uniform(0.003, 0.007) if r_ > 0.85 else 0.0)
             above = M[:, 2] > ez - 0.06
             k = int(np.argmax(np.where(above, rho, -1)))
             pts = list(M[: k + 1])
@@ -280,13 +294,14 @@ def bob_strands(env: Envelope, J, chin_z, seed=3):
                 for z in zs:
                     s = _smooth((ear_top + 0.026 - z) / 0.026)
                     ae = abs(a)
-                    if np.radians(66) < ae < np.radians(130):
-                        tuck = np.radians(118) + (ae - np.radians(66)) / np.radians(64) * np.radians(12)
+                    # Face-framing pieces fall in front of the ear; behind them the hair tucks.
+                    if np.radians(82) < ae < np.radians(130):
+                        tuck = np.radians(118) + (ae - np.radians(82)) / np.radians(48) * np.radians(12)
                         ae = ae + (tuck - ae) * s
                     aa = np.sign(a) * ae
                     # Taper in toward the chin: the bob hugs the jaw rather than flaring.
                     fall = (M[k, 2] - z) / max(M[k, 2] - zc, 1e-6)
-                    rr = (rho[k] + (widest(li, aa) - rho[k]) * s) * (1 - 0.07 * fall ** 1.5)
+                    rr = (rho[k] + (widest(li, aa) - rho[k]) * s) * (1 - 0.03 * fall ** 1.5)
                     p = np.array([c[0], c[1], 0.0]) + _az_dir(np.array(aa)) * rr
                     p[2] = z
                     pts.append(p)
@@ -310,7 +325,17 @@ def bob_strands(env: Envelope, J, chin_z, seed=3):
             radial[:, 2] = 0
             radial = _unit(radial + 1e-9)
             P = P - radial * (k_ * amt)[:, None]
-            out.append((P, li, width * (0.9 + 0.25 * rng.random()), a, t))
+            # Loose tips: each strand drifts a few millimetres sideways toward its end, so the
+            # hair does not read as combed into one shell.
+            tang = _az_dir(np.array(a) + np.pi / 2)
+            P = P + tang[None] * (rng.normal(0, 0.0026) * t ** 2)[:, None]
+            if a_deg < 50:
+                # The fringe sweeps toward her right (-X), most at the centre.
+                sweep = 0.011 * (1 - (a_deg / 50.0) ** 2)
+                P = P + np.array([-1.0, 0.0, 0.0])[None] * (sweep * t ** 2)[:, None]
+            # Narrower fringe pieces, so gaps show between them (the sheet's wispy bangs).
+            wf = 0.78 if a_deg < 46 and li == 0 else 1.0
+            out.append((P, li, width * wf * (0.9 + 0.25 * rng.random()), a, t))
     return out
 
 
