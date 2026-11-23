@@ -2069,9 +2069,9 @@ void SceneRenderer::submit_static(std::uint64_t key, const GpuMesh& mesh, const 
     // compared against the stored copy: bytewise first (copies of one material usually match,
     // padding included), field by field when the bytes differ; no packing or hashing.
     const bool unchanged = !inserted && r.mesh == &mesh && r.mesh_bounds.min == mesh.bounds.min && r.mesh_bounds.max == mesh.bounds.max &&
-                           r.mesh_indices == mesh.lods[0].index_count && std::memcmp(&r.model, &model, sizeof(Mat4)) == 0 &&
+                           r.mesh_indices == mesh.lods[0].index_count && std::memcmp(&r.model, &model, sizeof(Mat4)) == 0 && // NOLINT(bugprone-suspicious-memory-comparison): bitwise change test, a false mismatch only re-records
                            r.lightmap_offset.x == lightmap_uv_offset.x && r.lightmap_offset.y == lightmap_uv_offset.y &&
-                           (std::memcmp(&static_materials_[r.material].material, &material, sizeof(Material)) == 0 ||
+                           (std::memcmp(&static_materials_[r.material].material, &material, sizeof(Material)) == 0 || // NOLINT(bugprone-suspicious-memory-comparison): fast path, same_material decides on mismatch
                             same_material(static_materials_[r.material].material, material));
     if (!unchanged) {
         if (r.bucket != ~0u) static_buckets_[r.bucket].dirty = true; // rebuilt without it

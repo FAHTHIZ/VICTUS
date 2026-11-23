@@ -618,7 +618,7 @@ void Scene::update_transforms() {
         const WorldTransform* pw = f.parent >= 0 ? flat_[static_cast<std::size_t>(f.parent)].world : nullptr;
         const bool changed = (f.parent >= 0 && changed_[static_cast<std::size_t>(f.parent)]) || !snap.valid ||
                              snap.has_local != (f.local != nullptr) ||
-                             (f.local && std::memcmp(&snap.local, f.local, sizeof(Transform)) != 0);
+                             (f.local && std::memcmp(&snap.local, f.local, sizeof(Transform)) != 0); // NOLINT(bugprone-suspicious-memory-comparison): bitwise snapshot of a memcpy'd copy, a false change only recomputes
         changed_[i] = changed ? 1 : 0;
         if (!changed) continue;
         if (f.local) f.world->matrix = pw ? pw->matrix * f.local->matrix() : f.local->matrix();

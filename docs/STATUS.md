@@ -3627,3 +3627,13 @@ Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`):
 - `ctest -R "victus_project_tests|victus_export_tests"`: passed.
 - Next task: distance fog and aerial perspective in the HDR-sky templates so the ground no longer ends in a hard edge.
 
+## 2026-11-23 — clang-tidy gate green again
+
+Built:
+- `engine/render/src/scene_renderer.cpp`, `engine/scene/src/scene.cpp`: the three intentional bytewise change tests (retained static draw matrix and material, transform snapshots) carry a justified `NOLINT(bugprone-suspicious-memory-comparison)`; a false mismatch there only re-records or recomputes.
+
+Verified:
+- CI run 45149629682 (ADR-0235) failed only in the clang-tidy job on those three lines.
+- Local clang-tidy 21.1.8 (`tools/lint/run_clang_tidy.py -p build/tidy --changed-since ea1e329`): 0 of 6 files with diagnostics.
+- Next task: distance fog and aerial perspective in the HDR-sky templates.
+
