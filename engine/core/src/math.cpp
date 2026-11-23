@@ -40,26 +40,6 @@ Quat slerp(Quat a, Quat b, float t) noexcept {
     return {a.x * wa + b.x * wb, a.y * wa + b.y * wb, a.z * wa + b.z * wb, a.w * wa + b.w * wb};
 }
 
-Mat4 Mat4::rotation(Quat q) {
-    const float xx = q.x * q.x, yy = q.y * q.y, zz = q.z * q.z;
-    const float xy = q.x * q.y, xz = q.x * q.z, yz = q.y * q.z;
-    const float wx = q.w * q.x, wy = q.w * q.y, wz = q.w * q.z;
-    Mat4 m;
-    m.c[0] = {1 - 2 * (yy + zz), 2 * (xy + wz), 2 * (xz - wy), 0};
-    m.c[1] = {2 * (xy - wz), 1 - 2 * (xx + zz), 2 * (yz + wx), 0};
-    m.c[2] = {2 * (xz + wy), 2 * (yz - wx), 1 - 2 * (xx + yy), 0};
-    return m;
-}
-
-Mat4 Mat4::trs(Vec3 t, Quat r, Vec3 s) {
-    Mat4 m = rotation(r);
-    m.c[0] = m.c[0] * s.x;
-    m.c[1] = m.c[1] * s.y;
-    m.c[2] = m.c[2] * s.z;
-    m.c[3] = {t, 1.0f};
-    return m;
-}
-
 Mat4 Mat4::perspective(float fov_y, float aspect, float z_near, float z_far) {
     const float f = 1.0f / std::tan(fov_y * 0.5f);
     Mat4 m;
@@ -152,16 +132,6 @@ void decompose(const Mat4& m, Vec3& t, Quat& r, Vec3& s) noexcept {
     r = normalize(r);
 }
 
-Aabb Aabb::transformed(const Mat4& m) const noexcept {
-    if (!valid()) return *this;
-    const Vec3 c = m.transform_point(center());
-    const Vec3 e = extents();
-    Vec3 ne;
-    for (int i = 0; i < 3; ++i)
-        ne[i] = std::fabs(m.c[0][i]) * e.x + std::fabs(m.c[1][i]) * e.y + std::fabs(m.c[2][i]) * e.z;
-    return {c - ne, c + ne};
-}
-
 Frustum Frustum::from_matrix(const Mat4& vp) noexcept {
     const Mat4 t = transpose(vp); // rows of vp
     Frustum f;
@@ -176,16 +146,6 @@ Frustum Frustum::from_matrix(const Mat4& vp) noexcept {
         if (l > 0) p = p * (1.0f / l);
     }
     return f;
-}
-
-bool Frustum::intersects(const Aabb& box) const noexcept {
-    const Vec3 c = box.center();
-    const Vec3 e = box.extents();
-    for (const auto& p : planes) {
-        const float r = e.x * std::fabs(p.x) + e.y * std::fabs(p.y) + e.z * std::fabs(p.z);
-        if (dot(p.xyz(), c) + p.w < -r) return false;
-    }
-    return true;
 }
 
 std::uint32_t Color::rgba8() const noexcept {

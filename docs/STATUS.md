@@ -3390,6 +3390,8 @@ Verified (2-core sandbox, lavapipe Vulkan):
 
 ## 2026-11-23 — Change-driven transform propagation and batch-claiming parallel_for (ADR-0226)
 
+Commit: 640ef26.
+
 Built:
 - Audit of the CPU side of a frame against Unity and Unreal: [docs/audits/CPU_FRAME_ARCHITECTURE_VS_UNITY_UNREAL.md](audits/CPU_FRAME_ARCHITECTURE_VS_UNITY_UNREAL.md).
 - `ecs::World::structural_version()`, bumped by archetype moves, destroy and clear.
@@ -3420,3 +3422,16 @@ Verified (2-core sandbox):
 - Blender renders in the stand pose compared side by side with the design sheet; `docs/images/characters/blender_render_bodies.jpg` and `blender_render_heads.jpg` updated. Closer: Nova's slender, long-legged silhouette, dark knees and white boots; Orion's six-pack and boot straps. Still short of the sheet: Nova's bust plate is flatter than the sheet's sculpted bust, the neck reads ribbed grey rather than slim black, Orion's thighs carry less dark gap detail.
 - Not verified: the VICTUS runtime renderer with these GLBs.
 - Next task: neck, bust and thigh detail, then the runtime close-up review (ADR-0225).
+
+## 2026-11-23 — Inline hot math, CI fixes, full graphics verification (ADR-0226 follow-up)
+
+Built:
+- `Mat4::rotation`, `Mat4::trs`, `Aabb::transformed` and `Frustum::intersects` moved from `math.cpp` into `math.hpp` as inline `noexcept` functions, so the per-draw culling and transform loops in other modules can inline them without LTO. Same operations in the same order (bit-identical results).
+- CI (f9888c9): `game_ui.cpp` hashes the font stack's address as `std::uintptr_t` (clang-tidy `bugprone-sizeof-expression`); `skeleton_lod_tests.cpp` drops an unused variable (macOS `-Werror`). Both had failed run 45050447018 on 76e162d.
+
+Verified (2-vCPU sandbox, GCC 15.2, Release):
+- Headless `build/rel`: all 20 `bin/victus_*_tests` SUCCESS.
+- Graphics `build/gfx` (`-DVICTUS_WITH_GRAPHICS=ON`, lavapipe, `SDL_VIDEO_DRIVER=offscreen VICTUS_REQUIRE_GPU=1`): all 36 `bin/victus_*_tests` SUCCESS, including gpu, render, animation, asset, editor and runtime-facing suites; this also covers the ADR-0226 transform changes.
+- `victus_bench_core --reps 40`, two alternating runs: `math/trs_compose_100k` p50 4.16/4.18 → 3.55/3.61 ms (−14 %); `serial/integrate_1M` and `jobs/parallel_for_integrate_1M` unchanged within noise. `scene/update_transforms_*` unchanged within noise.
+- Next task: per-frame draw path in `SceneRenderer` (CPU frame architecture items 3-4).
+

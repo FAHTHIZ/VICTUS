@@ -145,8 +145,25 @@ struct Mat4 {
         m.c[2].z = s.z;
         return m;
     }
-    static Mat4 rotation(Quat q);
-    static Mat4 trs(Vec3 t, Quat r, Vec3 s);
+    // Inline: both run per entity per frame (transform propagation, skinning, extraction).
+    static Mat4 rotation(Quat q) noexcept {
+        const float xx = q.x * q.x, yy = q.y * q.y, zz = q.z * q.z;
+        const float xy = q.x * q.y, xz = q.x * q.z, yz = q.y * q.z;
+        const float wx = q.w * q.x, wy = q.w * q.y, wz = q.w * q.z;
+        Mat4 m;
+        m.c[0] = {1 - 2 * (yy + zz), 2 * (xy + wz), 2 * (xz - wy), 0};
+        m.c[1] = {2 * (xy - wz), 1 - 2 * (xx + zz), 2 * (yz + wx), 0};
+        m.c[2] = {2 * (xz + wy), 2 * (yz - wx), 1 - 2 * (xx + yy), 0};
+        return m;
+    }
+    static Mat4 trs(Vec3 t, Quat r, Vec3 s) noexcept {
+        Mat4 m = rotation(r);
+        m.c[0] = m.c[0] * s.x;
+        m.c[1] = m.c[1] * s.y;
+        m.c[2] = m.c[2] * s.z;
+        m.c[3] = {t, 1.0f};
+        return m;
+    }
     // Right-handed perspective, depth 0 (near) .. 1 (far).
     static Mat4 perspective(float fov_y, float aspect, float z_near, float z_far);
     // Right-handed orthographic, depth 0..1.
@@ -169,14 +186,31 @@ struct Aabb {
     }
     [[nodiscard]] Vec3 center() const noexcept { return (min + max) * 0.5f; }
     [[nodiscard]] Vec3 extents() const noexcept { return (max - min) * 0.5f; }
-    [[nodiscard]] Aabb transformed(const Mat4& m) const noexcept;
+    // Arvo's method: centre transformed, extents through the absolute 3x3. Inline (per draw).
+    [[nodiscard]] Aabb transformed(const Mat4& m) const noexcept {
+        if (!valid()) return *this;
+        const Vec3 c = m.transform_point(center());
+        const Vec3 e = extents();
+        const Vec3 ne{std::fabs(m.c[0].x) * e.x + std::fabs(m.c[1].x) * e.y + std::fabs(m.c[2].x) * e.z,
+                      std::fabs(m.c[0].y) * e.x + std::fabs(m.c[1].y) * e.y + std::fabs(m.c[2].y) * e.z,
+                      std::fabs(m.c[0].z) * e.x + std::fabs(m.c[1].z) * e.y + std::fabs(m.c[2].z) * e.z};
+        return {c - ne, c + ne};
+    }
 };
 
 // Frustum from a view-projection matrix; planes point inward (Gribb/Hartmann).
 struct Frustum {
     Vec4 planes[6];
     static Frustum from_matrix(const Mat4& view_proj) noexcept;
-    [[nodiscard]] bool intersects(const Aabb& box) const noexcept;
+    [[nodiscard]] bool intersects(const Aabb& box) const noexcept {
+        const Vec3 c = box.center();
+        const Vec3 e = box.extents();
+        for (const auto& p : planes) {
+            const float r = e.x * std::fabs(p.x) + e.y * std::fabs(p.y) + e.z * std::fabs(p.z);
+            if (p.x * c.x + p.y * c.y + p.z * c.z + p.w < -r) return false;
+        }
+        return true;
+    }
 };
 
 struct Color {
