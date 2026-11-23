@@ -3436,7 +3436,6 @@ Verified (2-vCPU sandbox, GCC 15.2, Release):
 - `victus_bench_core --reps 40`, two alternating runs: `math/trs_compose_100k` p50 4.16/4.18 → 3.55/3.61 ms (−14 %); `serial/integrate_1M` and `jobs/parallel_for_integrate_1M` unchanged within noise. `scene/update_transforms_*` unchanged within noise.
 - Next task: per-frame draw path in `SceneRenderer` (CPU frame architecture items 3-4).
 
-<<<<<<< Updated upstream
 ## 2026-11-23 — Slim dark neck column (ADR-0225)
 
 Built:
@@ -3450,7 +3449,6 @@ Verified (2-core sandbox):
 - Blender head renders compared with the sheet's head crops (`docs/images/characters/blender_render_heads.jpg` updated): the neck reads as a slim dark column under the helmet. Still short: the sheet's helmets are a darker brushed silver with more panel lines.
 - Not verified: the VICTUS runtime renderer with these GLBs.
 - Next task: helmet panel detail, Nova's bust, then the runtime close-up review (ADR-0225).
-=======
 
 ## 2026-11-23 — Per-frame material interning and state-ranked radix draw sorting (ADR-0227)
 
@@ -3465,5 +3463,5 @@ Verified (2-vCPU sandbox, GCC 15.2, Release, lavapipe, `SDL_VIDEO_DRIVER=offscre
 - 16,384 per-frame cubes, steady state, three alternating runs, before (fb2cdbd) → after: begin+submit 1.24/1.45/1.24 → 0.68/0.68/0.63 ms; render CPU 6.07/7.05/5.92 → 3.25/3.20/3.19 ms (visibility stage 3.2-3.7 → 1.8-1.9 ms, batching ~2.5 → ~1.15 ms). Retained group path unchanged (~0.15 + 0.23 ms). Callgrind, 10 frames: 368.6M → 308.5M instructions.
 - GPU-bound `scene/frame_*` cases (lavapipe) within run-to-run noise; an apparent +93 % on `frame_4096_cubes_low_320p_instanced_gpu` in one full run did not reproduce (isolated 66-71 ms both; full sequence 66.3 vs 67.4 ms).
 - Not verified: physical GPUs, multi-core machines.
+- Commit: 134d1d5.
 - Next task: parallel per-draw visibility (JobSystem) and retained draw records in runtime extraction.
->>>>>>> Stashed changes
