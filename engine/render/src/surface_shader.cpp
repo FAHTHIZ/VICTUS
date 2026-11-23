@@ -270,6 +270,18 @@ bool surface_code_has_function(std::string_view code, std::string_view name) {
     return e > b;
 }
 
+bool surface_code_may_discard(std::string_view code) {
+    const std::string text = blank_comments(code);
+    const auto ident = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_'; };
+    constexpr std::string_view word = "discard";
+    for (std::size_t at = text.find(word); at != std::string::npos; at = text.find(word, at + 1)) {
+        const bool start = at == 0 || !ident(text[at - 1]);
+        const bool end = at + word.size() >= text.size() || !ident(text[at + word.size()]);
+        if (start && end) return true;
+    }
+    return false;
+}
+
 std::string surface_code_without_function(std::string_view code, std::string_view name) {
     std::string out(code);
     const auto [b, e] = find_function(blank_comments(code), name);
@@ -281,9 +293,12 @@ std::string surface_code_without_function(std::string_view code, std::string_vie
 std::string surface_vertex_source(std::string_view surface_code, SurfaceVertexVariant variant) {
     const std::string_view base = detail::surface_vertex_source_text();
     std::string defines;
-    if (variant == SurfaceVertexVariant::Skinned || variant == SurfaceVertexVariant::ShadowSkinned) defines += "#define VX_SKINNED 1\n";
-    if (variant == SurfaceVertexVariant::Lightmapped) defines += "#define VX_LIGHTMAP 1\n";
-    if (variant == SurfaceVertexVariant::Shadow || variant == SurfaceVertexVariant::ShadowSkinned) defines += "#define VX_SHADOW 1\n";
+    using V = SurfaceVertexVariant;
+    if (variant == V::Skinned || variant == V::ShadowSkinned || variant == V::MotionSkinned) defines += "#define VX_SKINNED 1\n";
+    if (variant == V::Lightmapped) defines += "#define VX_LIGHTMAP 1\n";
+    if (variant == V::Shadow || variant == V::ShadowSkinned) defines += "#define VX_SHADOW 1\n";
+    if (variant == V::Motion || variant == V::MotionSkinned || variant == V::MotionRetained) defines += "#define VX_MOTION 1\n";
+    if (variant == V::MotionRetained) defines += "#define VX_RETAINED 1\n";
     const auto version_end = base.find('\n') + 1; // "#version 450"
     constexpr std::string_view marker = "// VICTUS_VERTEX_CODE";
     const auto at = base.find(marker);

@@ -45,6 +45,15 @@ struct InstanceData {
     Vec4 normal[3];
 };
 static_assert(sizeof(InstanceData) == 112);
+// Per-instance data of the vertex-function motion pass (ADR-0244, vertex buffer slot 1): this
+// frame's instance exactly as the forward pass reads it (locations 4..10; normal[1].w holds the
+// previous palette base of a skinned draw), then the previous model as three affine rows
+// (locations 3, 14, 15).
+struct VertexMotionInstance {
+    InstanceData current;
+    Vec4 prev_rows[3];
+};
+static_assert(sizeof(VertexMotionInstance) == 160);
 
 // normal[0].w carries the first joint matrix of a skinned instance (exact as float up to 2^24);
 // normal[1].w and normal[2].w the lightmap uv offset of a lightmapped one (ADR-0135).
@@ -556,6 +565,10 @@ struct SceneRenderer::FrameScratch {
     std::vector<MotionInstance> motion_instances;
     std::vector<MotionBatch> motion_batches;
     std::vector<std::pair<const Draw*, MotionInstance>> moving;
+    // Vertex-function motion (ADR-0244): per-frame draws with their instances, retained clusters.
+    std::vector<std::pair<const Draw*, VertexMotionInstance>> vertex_moving;
+    std::vector<VertexMotionInstance> vertex_motion_instances;
+    std::vector<Batch> vertex_motion_batches; // buffer empty = vertex_motion_buffer_
     std::vector<InstanceData> instances;
     std::vector<Batch> main_batches, transparent_batches;
     std::array<std::vector<Batch>, 4> shadow_batches;
@@ -576,6 +589,9 @@ struct SceneRenderer::FrameScratch {
         motion_instances.clear();
         motion_batches.clear();
         moving.clear();
+        vertex_moving.clear();
+        vertex_motion_instances.clear();
+        vertex_motion_batches.clear();
         instances.clear();
         main_batches.clear();
         transparent_batches.clear();
@@ -967,6 +983,7 @@ Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx, co
     p = dev.create_pipeline(prepass);
     if (!p) return std::move(p).error();
     r->prepass_cull_ = p.value();
+    r->prepass_desc_ = prepass;
     prepass.name = "depth_prepass_double_sided";
     prepass.cull = rhi::CullMode::None;
     p = dev.create_pipeline(prepass);
@@ -1237,7 +1254,7 @@ void SceneRenderer::push_vertex_material(rhi::CommandBuffer& cmd, const Material
     struct VertexMaterialUniforms {
         Vec4 time;
         std::array<Vec4, 4> params;
-    } u{Vec4(shader_time_, shadow ? 1.0f : 0.0f, 0.0f, 0.0f), m.shader_params};
+    } u{Vec4(shader_time_, shadow ? 1.0f : 0.0f, motion_prev_time_, 0.0f), m.shader_params};
     cmd.push_uniforms(rhi::ShaderStage::Vertex, 1, u);
 }
 
@@ -1274,6 +1291,84 @@ rhi::PipelineHandle SceneRenderer::surface_shadow_pipeline(const SurfaceVertexSt
         it->second[i] = *p;
     }
     return it->second[i];
+}
+
+rhi::PipelineHandle SceneRenderer::surface_depth_pipeline(const SurfaceVertexStage& stage, std::size_t slot) {
+    const bool motion = slot >= 4;
+    const bool double_sided = (slot & 1u) != 0;
+    const std::uint32_t kind = motion ? static_cast<std::uint32_t>((slot - 4) / 2) : static_cast<std::uint32_t>(slot / 2);
+    using V = SurfaceVertexVariant;
+    const V variant = !motion ? (kind ? V::ShadowSkinned : V::Shadow) : kind == 0 ? V::Motion : kind == 1 ? V::MotionSkinned : V::MotionRetained;
+    const rhi::ShaderHandle vs = stage.get(variant);
+    if (!vs) return {};
+    const std::uint64_t key = shader_bits(stage.get(V::Shadow));
+    const std::uint64_t fail_key = key ^ (motion ? 4ull : 2ull);
+    auto it = surface_depth_pipelines_.find(key);
+    if (it == surface_depth_pipelines_.end()) {
+        if (surface_depth_pipelines_.size() >= 64) {
+            for (auto& [k, set] : surface_depth_pipelines_)
+                for (auto pl : set)
+                    if (pl) ctx_.device().destroy(pl);
+            surface_depth_pipelines_.clear();
+        }
+        it = surface_depth_pipelines_.emplace(key, std::array<rhi::PipelineHandle, 10>{}).first;
+    }
+    if (!it->second[slot]) {
+        if (surface_failed_.contains(fail_key)) return {};
+        rhi::PipelineDesc d;
+        if (!motion) {
+            // The forward pass's vertex inputs, the pre-pass's depth state (ADR-0244).
+            const rhi::PipelineDesc& forward = variant_desc(kind ? kVertexSkinned : kVertexStatic);
+            d = prepass_desc_;
+            d.vertex_buffers = forward.vertex_buffers;
+            d.attributes = forward.attributes;
+            d.name = std::format("surface_prepass_{}_{}", vs.index, slot);
+        } else if (kind == 2) {
+            // Retained group instances: the group buffer as the forward pass reads it.
+            const rhi::PipelineDesc& forward = variant_desc(kVertexStatic);
+            d = motion_desc_;
+            d.vertex_buffers = forward.vertex_buffers;
+            d.attributes = forward.attributes;
+            d.name = std::format("surface_motion_retained_{}_{}", vs.index, slot);
+        } else {
+            d = motion_desc_;
+            d.vertex_buffers = {{0, sizeof(Vertex3D), false}, {1, sizeof(VertexMotionInstance), true}};
+            d.attributes = {{0, 0, rhi::VertexFormat::Float3, 0},
+                            {1, 0, rhi::VertexFormat::Float3, 12},
+                            {2, 0, rhi::VertexFormat::Float2, 24},
+                            {13, 0, rhi::VertexFormat::UByte4Norm, 48}};
+            for (std::uint32_t i = 0; i < 4; ++i) d.attributes.push_back({4 + i, 1, rhi::VertexFormat::Float4, i * 16});
+            for (std::uint32_t i = 0; i < 3; ++i) d.attributes.push_back({8 + i, 1, rhi::VertexFormat::Float4, 64 + i * 16});
+            d.attributes.push_back({3, 1, rhi::VertexFormat::Float4, 112});
+            d.attributes.push_back({14, 1, rhi::VertexFormat::Float4, 128});
+            d.attributes.push_back({15, 1, rhi::VertexFormat::Float4, 144});
+            if (kind == 1) {
+                d.vertex_buffers.push_back({2, sizeof(SkinVertex), false});
+                d.attributes.push_back({11, 2, rhi::VertexFormat::UShort4, 0});
+                d.attributes.push_back({12, 2, rhi::VertexFormat::Float4, 8});
+            }
+            d.name = std::format("surface_motion_{}_{}", vs.index, slot);
+        }
+        d.vertex = vs;
+        d.cull = double_sided ? rhi::CullMode::None : rhi::CullMode::Back;
+        auto p = ctx_.device().create_pipeline(d);
+        if (!p) {
+            VICTUS_LOG_ERROR("render", "surface shader {} pipeline: {}", motion ? "motion vector" : "depth pre-pass", p.error().message);
+            surface_failed_.insert(fail_key);
+            return {};
+        }
+        it->second[slot] = *p;
+    }
+    return it->second[slot];
+}
+
+rhi::PipelineHandle SceneRenderer::surface_prepass_pipeline(const SurfaceVertexStage& stage, bool skinned, bool double_sided) {
+    return surface_depth_pipeline(stage, (skinned ? 2u : 0u) + (double_sided ? 1u : 0u));
+}
+
+rhi::PipelineHandle SceneRenderer::surface_motion_pipeline(const SurfaceVertexStage& stage, std::uint32_t kind, bool double_sided) {
+    if (!ensure_motion_pipelines()) return {};
+    return surface_depth_pipeline(stage, 4u + kind * 2u + (double_sided ? 1u : 0u));
 }
 
 namespace {
@@ -1352,6 +1447,7 @@ SceneRenderer::~SceneRenderer() {
             if (pl) d.destroy(pl);
     if (overdraw_tex_) d.destroy(overdraw_tex_);
     if (motion_buffer_) d.destroy(motion_buffer_);
+    if (vertex_motion_buffer_) d.destroy(vertex_motion_buffer_);
     if (palette_buffer_) d.destroy(palette_buffer_);
     if (light_buffer_) d.destroy(light_buffer_);
     if (cookie_buffer_) d.destroy(cookie_buffer_);
@@ -1361,6 +1457,9 @@ SceneRenderer::~SceneRenderer() {
         for (auto pl : set)
             if (pl) d.destroy(pl);
     for (auto& [k, set] : surface_shadow_pipelines_)
+        for (auto pl : set)
+            if (pl) d.destroy(pl);
+    for (auto& [k, set] : surface_depth_pipelines_)
         for (auto pl : set)
             if (pl) d.destroy(pl);
     for (auto& [k, pl] : msaa_pipelines_)
@@ -1536,6 +1635,8 @@ bool SceneRenderer::ensure_motion_pipelines() {
         desc.depth_compare = rhi::CompareOp::LessEqual;
         desc.depth_format = depth_format_;
         desc.color_targets = {{rhi::Format::RG16_FLOAT, rhi::BlendMode::Opaque}};
+        motion_desc_ = desc;
+        motion_desc_.cull = rhi::CullMode::Back;
         rhi::PipelineDesc skin = desc;
         skin.vertex = skin_vs.value();
         skin.vertex_buffers.push_back({2, sizeof(SkinVertex), false});
@@ -3015,41 +3116,74 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     });
     stats_.visible = static_cast<std::uint32_t>(visible.size());
 
+    {
+        // This frame's shader clock, before the motion stage: vertex-function draws move with it (ADR-0244).
+        double t = time_ ? *time_ : std::chrono::duration<double>(std::chrono::steady_clock::now() - render_epoch()).count();
+        t = std::fmod(std::max(t, 0.0), 3600.0); // keeps float precision for sin(time) and scrolling
+        shader_time_ = static_cast<float>(t);
+    }
     stage.emplace("render.cpu.motion");
     // Object motion vectors: visible opaque draws whose transform or joints changed since the last
     // frame. Previous joints are appended to this frame's palette so one storage buffer serves both.
     auto& motion_instances = F.motion_instances;
     auto& motion_batches = F.motion_batches;
+    auto& vertex_motion_instances = F.vertex_motion_instances;
+    auto& vertex_motion_batches = F.vertex_motion_batches;
     const bool track_motion = taa && S.motion_vectors;
-    if (track_motion && history_valid_ && !motion_prev_.empty()) {
+    if (track_motion && history_valid_) {
         auto& moving = F.moving;
+        auto& vertex_moving = F.vertex_moving;
+        // Vertex functions animate with the shader clock (ADR-0244): while it runs, every draw
+        // with one may move, tracked or not; a paused clock leaves only transform/pose changes.
+        const bool clock_moved = shader_time_ != motion_prev_time_;
         for (const Draw* d : visible) {
             // Alpha-tested draws would write motion through their holes (no discard here).
-            // Vertex functions animate in the shader, which the motion pass does not run.
-            if (d->motion_id == 0 || d->material->alpha_cutoff > 0.0f || d->material->vertex_stage) continue;
-            const auto it = motion_prev_.find(d->motion_id);
-            if (it == motion_prev_.end()) continue;
-            const MotionState& prev = it->second;
-            // Bitwise on purpose: any change, including -0/+0, counts as motion (Mat4 has no padding).
-            const bool moved = std::memcmp(&prev.model, &d->model, sizeof(Mat4)) != 0; // NOLINT(bugprone-suspicious-memory-comparison)
-            const bool same_skeleton = d->skinned && prev.joint_count == d->joint_count && prev.palette_src == d->palette_src;
-            const bool baked = d->skinned && d->palette_src.valid();
-            // Baked palettes (ADR-0200): the previous pose is still in the same buffer at its old offset.
-            const bool posed = same_skeleton && (baked ? prev.joint_offset != d->palette
-                                                       : std::memcmp(motion_joints_.data() + prev.joint_offset, palette_.data() + d->palette,
-                                                                     d->joint_count * sizeof(Mat4)) != 0);
-            if (!moved && !posed) continue;
+            if (d->material->alpha_cutoff > 0.0f) continue;
+            const bool vertex_fn = d->material->vertex_stage != nullptr;
+            if (vertex_fn && d->group >= 0) {
+                // Retained clusters never move: only the clock can move their vertices.
+                if (clock_moved) vertex_motion_batches.push_back({d, d->cluster_first, d->cluster_count, d->lod,
+                                                                  groups_[static_cast<std::size_t>(d->group)].buffer});
+                continue;
+            }
+            const MotionState* prev = nullptr;
+            if (d->motion_id != 0)
+                if (const auto it = motion_prev_.find(d->motion_id); it != motion_prev_.end()) prev = &it->second;
+            if (!prev && !vertex_fn) continue;
+            bool moved = false, posed = false;
+            std::uint32_t prev_base = d->palette;
+            if (prev) {
+                // Bitwise on purpose: any change, including -0/+0, counts as motion (Mat4 has no padding).
+                moved = std::memcmp(&prev->model, &d->model, sizeof(Mat4)) != 0; // NOLINT(bugprone-suspicious-memory-comparison)
+                const bool same_skeleton = d->skinned && prev->joint_count == d->joint_count && prev->palette_src == d->palette_src;
+                const bool baked = d->skinned && d->palette_src.valid();
+                // Baked palettes (ADR-0200): the previous pose is still in the same buffer at its old offset.
+                posed = same_skeleton && (baked ? prev->joint_offset != d->palette
+                                                : std::memcmp(motion_joints_.data() + prev->joint_offset, palette_.data() + d->palette,
+                                                              d->joint_count * sizeof(Mat4)) != 0);
+                if (!moved && !posed && !(vertex_fn && clock_moved)) continue;
+                if (posed && baked) {
+                    prev_base = prev->joint_offset;
+                } else if (posed) {
+                    prev_base = static_cast<std::uint32_t>(palette_.size());
+                    palette_.insert(palette_.end(), motion_joints_.begin() + prev->joint_offset,
+                                    motion_joints_.begin() + prev->joint_offset + prev->joint_count);
+                }
+            } else if (!clock_moved) {
+                continue; // untracked vertex-function draw: only the clock moves it
+            }
+            const Mat4& prev_model = prev ? prev->model : d->model;
+            if (vertex_fn) {
+                VertexMotionInstance vi{};
+                vi.current = make_instance(d->model, d->palette);
+                vi.current.normal[1].w = static_cast<float>(prev_base);
+                for (int r = 0; r < 3; ++r) vi.prev_rows[r] = {prev_model.c[0][r], prev_model.c[1][r], prev_model.c[2][r], prev_model.c[3][r]};
+                vertex_moving.emplace_back(d, vi);
+                continue;
+            }
             MotionInstance mi{};
             mi.model = d->model;
-            for (int r = 0; r < 3; ++r) mi.prev_rows[r] = {prev.model.c[0][r], prev.model.c[1][r], prev.model.c[2][r], prev.model.c[3][r]};
-            std::uint32_t prev_base = d->palette;
-            if (posed && baked) {
-                prev_base = prev.joint_offset;
-            } else if (posed) {
-                prev_base = static_cast<std::uint32_t>(palette_.size());
-                palette_.insert(palette_.end(), motion_joints_.begin() + prev.joint_offset,
-                                motion_joints_.begin() + prev.joint_offset + prev.joint_count);
-            }
+            for (int r = 0; r < 3; ++r) mi.prev_rows[r] = {prev_model.c[0][r], prev_model.c[1][r], prev_model.c[2][r], prev_model.c[3][r]};
             mi.params = {static_cast<float>(d->palette), static_cast<float>(prev_base), 0.0f, 0.0f};
             moving.emplace_back(d, mi);
         }
@@ -3073,9 +3207,40 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 }
                 motion_batches.push_back({d, offset, 1});
             }
-            stats_.motion_draws = static_cast<std::uint32_t>(motion_instances.size());
-            stats_.motion_batches = static_cast<std::uint32_t>(motion_batches.size());
         }
+        if (!vertex_moving.empty()) {
+            // One batch per run of instances drawn with the same stage, material uniforms and mesh.
+            std::stable_sort(vertex_moving.begin(), vertex_moving.end(), [](const auto& a, const auto& b) {
+                const Draw& x = *a.first;
+                const Draw& y = *b.first;
+                if (x.material->vertex_stage != y.material->vertex_stage) return x.material->vertex_stage < y.material->vertex_stage;
+                if (x.skinned != y.skinned) return !x.skinned;
+                if (x.material->double_sided != y.material->double_sided) return !x.material->double_sided;
+                if (x.material != y.material) return x.material < y.material;
+                if (x.mesh != y.mesh) return x.mesh < y.mesh;
+                return x.lod < y.lod;
+            });
+            for (const auto& [d, vi] : vertex_moving) {
+                const auto offset = static_cast<std::uint32_t>(vertex_motion_instances.size());
+                vertex_motion_instances.push_back(vi);
+                if (!vertex_motion_batches.empty()) {
+                    Batch& p = vertex_motion_batches.back();
+                    const Draw* f = p.first;
+                    if (!p.buffer && f->mesh == d->mesh && p.lod == d->lod && f->skinned == d->skinned && f->palette_src == d->palette_src &&
+                        f->material->double_sided == d->material->double_sided && same_vertex_stage(*f->material, *d->material) &&
+                        p.instance_offset + p.instance_count == offset) {
+                        ++p.instance_count;
+                        continue;
+                    }
+                }
+                vertex_motion_batches.push_back({d, offset, 1, d->lod});
+            }
+        }
+        std::uint32_t vertex_draws = 0;
+        for (const Batch& b : vertex_motion_batches) vertex_draws += b.instance_count;
+        stats_.motion_draws = static_cast<std::uint32_t>(motion_instances.size()) + vertex_draws;
+        stats_.motion_batches = static_cast<std::uint32_t>(motion_batches.size() + vertex_motion_batches.size());
+        stats_.vertex_motion_draws = vertex_draws;
     }
     // This frame's state becomes the next frame's "previous" once the frame is recorded.
     motion_next_.clear();
@@ -3113,6 +3278,26 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         cmd.upload_buffer(motion_buffer_, 0,
                           {reinterpret_cast<const std::uint8_t*>(motion_instances.data()),
                            motion_instances.size() * sizeof(MotionInstance)},
+                          true);
+    }
+    if (!vertex_motion_instances.empty()) {
+        const auto needed = static_cast<std::uint32_t>(vertex_motion_instances.size());
+        if (needed > vertex_motion_capacity_) {
+            if (vertex_motion_buffer_) dev.destroy(vertex_motion_buffer_);
+            vertex_motion_buffer_ = {};
+            vertex_motion_capacity_ = std::max({needed, vertex_motion_capacity_ * 2, 64u});
+            auto b = dev.create_buffer({"vertex_motion_instances",
+                                        vertex_motion_capacity_ * static_cast<std::uint32_t>(sizeof(VertexMotionInstance)),
+                                        rhi::BufferUsageVertex});
+            if (!b) {
+                vertex_motion_capacity_ = 0;
+                return std::move(b).error();
+            }
+            vertex_motion_buffer_ = b.value();
+        }
+        cmd.upload_buffer(vertex_motion_buffer_, 0,
+                          {reinterpret_cast<const std::uint8_t*>(vertex_motion_instances.data()),
+                           vertex_motion_instances.size() * sizeof(VertexMotionInstance)},
                           true);
     }
 
@@ -3972,10 +4157,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     lighting.cascade_splits = {cascade_splits_[0], cascade_splits_[1], cascade_splits_[2], cascade_splits_[3]};
     lighting.cascade_texel = {cascade_texel_[0], cascade_texel_[1], cascade_texel_[2], cascade_texel_[3]};
     {
-        double t = time_ ? *time_ : std::chrono::duration<double>(std::chrono::steady_clock::now() - render_epoch()).count();
-        t = std::fmod(std::max(t, 0.0), 3600.0); // keeps float precision for sin(time) and scrolling
-        lighting.screen = inv_size(rw, rh, static_cast<float>(t), hdr_quant);
-        shader_time_ = static_cast<float>(t);
+        lighting.screen = inv_size(rw, rh, shader_time_, hdr_quant); // shader_time_ set before the motion stage
         const float ai = env_.ambient_intensity;
         lighting.fog_color = {env_.fog_color.r * ai, env_.fog_color.g * ai, env_.fog_color.b * ai,
                               static_cast<float>(env_.fog_mode)};
@@ -4568,17 +4750,27 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     // Alpha-tested and surface-shaded draws (which may discard): depth comes from the main pass.
                     // With MSAA the main pass depth is multisampled and not sampled later, so surface-shaded
                     // draws without an alpha test (terrain) are written here; alpha-tested ones are left out.
-                    // Vertex functions move vertices: their depth always comes from the main pass.
+                    // Vertex functions (ADR-0244) are drawn with their own stage when their surface
+                    // never discards (vertex-only shaders, the starter foliage).
                     // Cross-fading draws (ADR-0184) dither in the main pass, so they are left out too.
-                    if (d->material->alpha_cutoff > 0.0f || d->material->vertex_stage || (d->material->surface_shader && msaa <= 1) ||
-                        d->lod_fade != 0.0f)
-                        continue;
-                    const rhi::PipelineHandle want = d->skinned ? (d->material->double_sided ? skin_prepass_double_ : skin_prepass_cull_)
-                                                                : (d->material->double_sided ? prepass_double_ : prepass_cull_);
+                    const SurfaceVertexStage* vx = d->material->vertex_stage;
+                    const bool may_discard = d->material->surface_shader && msaa <= 1 && !(vx && !vx->fragment_may_discard);
+                    if (d->material->alpha_cutoff > 0.0f || may_discard || d->lod_fade != 0.0f) continue;
+                    rhi::PipelineHandle want = d->skinned ? (d->material->double_sided ? skin_prepass_double_ : skin_prepass_cull_)
+                                                          : (d->material->double_sided ? prepass_double_ : prepass_cull_);
+                    if (vx) {
+                        want = surface_prepass_pipeline(*vx, d->skinned, d->material->double_sided);
+                        if (!want) continue; // logged; the main pass writes its depth
+                    }
                     if (!(bound == want)) {
                         pass.bind_pipeline(want);
                         if (d->skinned) pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*d));
                         bound = want;
+                    }
+                    if (vx) {
+                        push_vertex_material(ctx.cmd, *d->material, false);
+                        bind_shader_textures(pass, *d->material, false);
+                        stats_.prepass_vertex_draws += b.instance_count;
                     }
                     if (d->skinned) {
                         pass.bind_vertex_buffer(2, d->mesh->skin);
@@ -5422,7 +5614,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         if (!taa_pl) return std::move(taa_pl).error();
         TaaUpscaleUniforms tu{};
         tu.reproject = prev_view_proj_ * inverse(view_proj_unjittered);
-        const bool object_motion = have_prev && !motion_batches.empty();
+        const bool object_motion = have_prev && (!motion_batches.empty() || !vertex_motion_batches.empty());
         // Clip box width (in standard deviations): the upscaler's 3x3 render-texel neighbourhood spans
         // several output pixels, so a native-width box clips away detail the history reconstructed
         // from earlier jitter positions (ADR-0142: 2.0 measured best, also under camera motion).
@@ -5476,11 +5668,35 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     b.write_color(motion, rhi::LoadOp::Clear, {0, 0, 0, 0});
                     b.write_depth(depth, rhi::LoadOp::Load, 1.0f);
                 },
-                [this, &motion_batches, view_proj](PassContext& ctx) {
+                [this, &motion_batches, &vertex_motion_batches, &bind_shader_textures, view_proj](PassContext& ctx) {
                     rhi::RenderPass& pass = *ctx.pass;
                     const MotionUniforms mu{view_proj, prev_view_proj_};
                     ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, mu);
                     rhi::PipelineHandle bound{};
+                    // Vertex functions (ADR-0244): the stage's motion variant runs the function at this
+                    // and the previous frame's clock and model.
+                    for (const Batch& b : vertex_motion_batches) {
+                        const Draw* d = b.first;
+                        const std::uint32_t kind = b.buffer ? 2u : d->skinned ? 1u : 0u;
+                        const rhi::PipelineHandle want = surface_motion_pipeline(*d->material->vertex_stage, kind, d->material->double_sided);
+                        if (!want) continue;
+                        if (!(bound == want)) {
+                            pass.bind_pipeline(want);
+                            bound = want;
+                        }
+                        push_vertex_material(ctx.cmd, *d->material, false);
+                        bind_shader_textures(pass, *d->material, false);
+                        if (d->skinned) {
+                            pass.bind_vertex_buffer(2, d->mesh->skin);
+                            pass.bind_storage_buffer(rhi::ShaderStage::Vertex, 0, palette_of(*d));
+                        }
+                        pass.bind_vertex_buffer(0, d->mesh->vertices);
+                        if (b.buffer) pass.bind_vertex_buffer(1, b.buffer, b.instance_offset * kInstanceStride);
+                        else pass.bind_vertex_buffer(1, vertex_motion_buffer_, b.instance_offset * static_cast<std::uint32_t>(sizeof(VertexMotionInstance)));
+                        pass.bind_index_buffer(d->mesh->indices, rhi::IndexType::U32);
+                        draw_mesh_lod(pass, *d->mesh, b.lod, b.instance_count);
+                    }
+                    bound = {};
                     for (const auto& b : motion_batches) {
                         const Draw* d = b.first;
                         const rhi::PipelineHandle want = d->skinned ? (d->material->double_sided ? skin_motion_double_ : skin_motion_cull_)
@@ -5876,6 +6092,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     }
     motion_prev_.swap(motion_next_);
     motion_joints_.swap(motion_joints_next_);
+    if (taa) motion_prev_time_ = shader_time_;
     if (auto_exposure) {
         exposure_index_ ^= 1u;
         adaptation_valid_ = true;

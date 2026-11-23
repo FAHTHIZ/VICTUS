@@ -52,11 +52,15 @@ enum class MaterialBlend : std::uint8_t { Opaque, Alpha, Additive };
 
 // Vertex shaders compiled from a surface shader's `vertex()` function (surface_vertex_source(),
 // ADR-0170), one per pipeline family. Owned by whoever compiled them (runtime::GpuAssetCache);
-// a Material points at them while they are alive.
-enum class SurfaceVertexVariant : std::uint8_t { Static, Skinned, Lightmapped, Shadow, ShadowSkinned };
-inline constexpr std::size_t kSurfaceVertexVariants = 5;
+// a Material points at them while they are alive. The Shadow variants also draw the camera depth
+// pre-pass; the Motion variants draw object motion vectors (ADR-0244).
+enum class SurfaceVertexVariant : std::uint8_t { Static, Skinned, Lightmapped, Shadow, ShadowSkinned, Motion, MotionSkinned, MotionRetained };
+inline constexpr std::size_t kSurfaceVertexVariants = 8;
 struct SurfaceVertexStage {
     std::array<rhi::ShaderHandle, kSurfaceVertexVariants> shaders{}; // indexed by SurfaceVertexVariant
+    // Whether the shader's surface() may `discard` (ADR-0244). A stage whose fragment never
+    // discards writes its displaced depth in the pre-pass, so it gets SSAO and early depth.
+    bool fragment_may_discard{true};
     [[nodiscard]] rhi::ShaderHandle get(SurfaceVertexVariant v) const noexcept { return shaders[static_cast<std::size_t>(v)]; }
 };
 
@@ -176,6 +180,8 @@ struct SurfaceDeclarations {
 [[nodiscard]] std::string surface_shader_source(std::string_view surface_code);
 // Whether surface shader code defines `void surface(...)` / `void vertex(...)` (comments ignored).
 [[nodiscard]] bool surface_code_has_function(std::string_view code, std::string_view name);
+// Whether `discard` appears as a keyword outside comments (conservative: anywhere in the code).
+[[nodiscard]] bool surface_code_may_discard(std::string_view code);
 // `code` with the definition of function `name` blanked out (newlines kept, so compiler line
 // numbers stay the user's); unchanged when it is not defined.
 [[nodiscard]] std::string surface_code_without_function(std::string_view code, std::string_view name);
@@ -910,8 +916,12 @@ struct SceneStats {
     // Local light shadows: shadowed lights, atlas tiles rendered, caster draws over all tiles.
     std::uint32_t local_shadow_lights{0}, local_shadow_tiles{0}, local_shadow_draws{0};
     std::uint32_t occlusion_tested{0}, occlusion_batches{0};
-    // Object motion vectors: moving instances drawn into the motion buffer / their batches.
-    std::uint32_t motion_draws{0}, motion_batches{0};
+    // Object motion vectors: moving instances drawn into the motion buffer / their batches
+    // (vertex-function draws included). vertex_motion_draws: instances whose motion comes from
+    // their material's vertex function run at this and the previous frame's time (ADR-0244).
+    std::uint32_t motion_draws{0}, motion_batches{0}, vertex_motion_draws{0};
+    // Vertex-function instances written by the depth pre-pass (ADR-0244, part of prepass_draws).
+    std::uint32_t prepass_vertex_draws{0};
     // Volumetric fog this frame: grid size (0 when off) and fog volumes used.
     bool volumetric_fog{false};
     std::uint32_t fog_froxels_x{0}, fog_froxels_y{0}, fog_slices{0}, fog_volumes{0};
@@ -1253,6 +1263,17 @@ private:
     // uniform slot 1 (ADR-0170).
     void push_vertex_material(rhi::CommandBuffer& cmd, const Material& m, bool shadow) const;
     float shader_time_{0}; // seconds, as lighting.screen.z for this frame
+    float motion_prev_time_{0}; // shader_time_ of the last frame recorded with TAA history (ADR-0244)
+    // Camera depth pre-pass and motion-vector pipelines for a material with a vertex function
+    // (ADR-0244), by the stage's static shadow shader handle: [0..3] pre-pass [skinned * 2 +
+    // double_sided], [4..9] motion [kind * 2 + double_sided] with kind 0 static, 1 skinned,
+    // 2 retained group instances. Invalid when creation failed (logged once).
+    [[nodiscard]] rhi::PipelineHandle surface_prepass_pipeline(const SurfaceVertexStage& stage, bool skinned, bool double_sided);
+    [[nodiscard]] rhi::PipelineHandle surface_motion_pipeline(const SurfaceVertexStage& stage, std::uint32_t kind, bool double_sided);
+    [[nodiscard]] rhi::PipelineHandle surface_depth_pipeline(const SurfaceVertexStage& stage, std::size_t slot);
+    std::unordered_map<std::uint64_t, std::array<rhi::PipelineHandle, 10>> surface_depth_pipelines_;
+    rhi::PipelineDesc prepass_desc_; // built-in static depth pre-pass (back-face culled)
+    rhi::PipelineDesc motion_desc_;  // built-in static motion-vector pass (back-face culled)
     // Shadow-map pipeline for a material with a vertex function (ADR-0170): [skinned][alpha cut].
     [[nodiscard]] rhi::PipelineHandle surface_shadow_pipeline(const SurfaceVertexStage& stage, bool skinned, bool cut);
     [[nodiscard]] rhi::PipelineHandle surface_pipeline(rhi::ShaderHandle fragment, const SurfaceVertexStage* vertex, std::uint32_t variant, bool double_sided,
@@ -1347,6 +1368,8 @@ private:
     bool motion_failed_{false};
     rhi::BufferHandle motion_buffer_;
     std::uint32_t motion_capacity_{0}; // in instances
+    rhi::BufferHandle vertex_motion_buffer_;    // ADR-0244: VertexMotionInstance per vertex-function draw
+    std::uint32_t vertex_motion_capacity_{0};   // in instances
     std::unordered_map<std::uint64_t, MotionState> motion_prev_, motion_next_;
     // LOD hysteresis: level drawn last frame per (motion id, mesh), for the output size below.
     // LOD hysteresis history (ADR-0150): open addressing over a power-of-two table rebuilt each

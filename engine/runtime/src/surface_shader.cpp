@@ -28,7 +28,8 @@ Result<shadercompiler::CompiledShader> compile_vertex(std::string_view code, std
     auto compiled = shadercompiler::compile_glsl(render::surface_vertex_source(code, variant), shadercompiler::Stage::Vertex, options,
                                                  diagnostics);
     if (!compiled) return compiled;
-    const bool skinned = variant == render::SurfaceVertexVariant::Skinned || variant == render::SurfaceVertexVariant::ShadowSkinned;
+    const bool skinned = variant == render::SurfaceVertexVariant::Skinned || variant == render::SurfaceVertexVariant::ShadowSkinned ||
+                         variant == render::SurfaceVertexVariant::MotionSkinned;
     const shadercompiler::ResourceCounts& c = compiled->counts;
     // Frame + VertexMaterial; skinned variants read the joint palette (a texture under ES).
     // Declared textures (ADR-0171) take the first sampler slots.
@@ -130,6 +131,7 @@ Result<render::SurfaceVertexStage> create_surface_vertex_stage(rhi::Device& devi
         if (!sh) return fail(std::move(sh).error());
         stage.shaders[i] = *sh;
     }
+    stage.fragment_may_discard = render::surface_code_may_discard(code);
     return stage;
 }
 

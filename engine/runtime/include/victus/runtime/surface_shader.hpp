@@ -44,8 +44,9 @@ namespace victus::runtime {
 // Whether surface shader code defines a vertex function `void vertex(VertexInput i, inout Vertex v)`
 // (ADR-0170). Shaders may define surface(), vertex() or both.
 [[nodiscard]] bool surface_shader_has_vertex(std::string_view code);
-// Compiles the vertex function into the five vertex shaders (static, skinned, lightmapped, shadow,
-// skinned shadow) the scene renderer binds for materials using the shader. The caller owns them.
+// Compiles the vertex function into the eight vertex shaders (static, skinned, lightmapped, shadow,
+// skinned shadow, and the three motion-vector variants of ADR-0244) the scene renderer binds for
+// materials using the shader. The caller owns them.
 [[nodiscard]] Result<render::SurfaceVertexStage> create_surface_vertex_stage(rhi::Device& device, std::string_view code,
                                                                              std::string_view name);
 

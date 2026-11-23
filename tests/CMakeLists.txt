@@ -179,6 +179,7 @@ victus_add_test(victus_gpu_tests
         render/gpu_occlusion_tests.cpp
         render/gpu_local_shadow_tests.cpp
         render/gpu_motion_tests.cpp
+        render/gpu_vertex_motion_tests.cpp
         render/gpu_decal_tests.cpp
         render/gpu_water_tests.cpp
         render/gpu_ssr_tests.cpp

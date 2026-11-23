@@ -3729,3 +3729,29 @@ Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, Xvfb + lavapipe):
   - Counters re-baselined: template-3d 60,312 triangles and 19 surface-shader draws; multiplayer 124 draw calls.
 - clang-tidy: 0 diagnostics in tree.cpp, panels.cpp, city_scene.cpp, starter_materials.cpp and templates.cpp.
 - Next task: motion vectors and a depth prepass for vertex-function materials, so swaying foliage reprojects under TAA.
+
+## 2026-11-23 — Vertex functions in the depth prepass and motion vectors (ADR-0244)
+
+Built:
+- Surface vertex template: `invariant gl_Position`, the user function wrapped in `victus_run_vertex()`, and three motion variants (`Motion`, `MotionSkinned`, `MotionRetained`) that run `vertex()` at the current and previous clock, model and palette. Each vertex-function shader now compiles eight variants.
+- `render::surface_code_may_discard()` and `SurfaceVertexStage::fragment_may_discard`.
+- Depth prepass: vertex-function draws whose surface never discards (or with MSAA) are drawn through the shadow variants, so they get SSAO. Counter `SceneStats::prepass_vertex_draws`.
+- Object motion vectors: with TAA history and a moving shader clock, every visible opaque vertex-function draw (tracked, untracked or in a retained group) gets motion from its own 160-byte instance stream. With a paused clock, only moved or re-posed tracked draws do. Counter `SceneStats::vertex_motion_draws`.
+- Tests (tests/render/gpu_vertex_motion_tests.cpp):
+  - `surface shaders: discard detection ignores comments and longer identifiers`
+  - `gpu vertex functions: animated vertices get object motion vectors under TAA`
+
+Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, Xvfb + lavapipe):
+- `victus_gpu_tests -tc="gpu vertex functions*,surface shaders: discard*"`: 2 cases, 140 assertions passed.
+  - A comb of nine bars slid 0.11 m a frame by `vertex()`, 14 TAA frames. Mean error against the converged still reference: 5.71 camera-only, 2.90 with vertex motion (threshold 0.65x).
+  - Sharpness: reference 92,956; camera-only 38,170; with vertex motion 68,838.
+  - 9 vertex-motion draws a frame after the first frame, 0 with a paused clock.
+  - Forcing the depth prepass changes no pixel (mean difference 0) with 9 prepass vertex draws; a surface containing `discard` stays out of the prepass.
+- Full `VICTUS_REQUIRE_GPU=1 ctest -j2 -E perf_budgets`: 46/47 passed.
+  - Only `victus_editor_tests` failed: a SIGSEGV in `studio: the Script Debugger stops play mode...`.
+  - That case passes alone and with all 39 `studio*` cases. A whole-binary rerun then passed 84/84.
+  - This is the same intermittent editor crash recorded for ADR-0243 in a different case. It is unexplained and still open.
+- `ctest -R perf_budgets` (alone): passed with no re-baseline.
+- `tools/shaders/compile_shaders.py --check`: built-in shaders up to date (64).
+- clang-tidy on scene_renderer.cpp, both surface_shader.cpp files and the new test: 0 diagnostics. The only message is the GCC-only `-Wshadow=local` flag being unknown to clang.
+- Next task: culling-bounds growth for vertex functions (a per-material maximum vertex offset, like Unreal's Max World Position Offset Displacement).
