@@ -2036,7 +2036,9 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
         if (!mr.visible) return;
         const std::uint64_t motion_id = entity.bits() + 1; // stable per entity; never 0 for live entities
         const bool scattered = foliage_view(entity);
-        const auto emit = [&](const render::GpuMesh& base, const render::Material& m) {
+        // `retain`: the mesh is the asset's own (not a per-entity morphed copy), so an unchanged
+        // renderer may be drawn from a retained static group (ADR-0230).
+        const auto emit = [&](const render::GpuMesh& base, const render::Material& m, bool retain = true) {
             // Baked lighting (ADR-0125): static renderers draw their lightmapped copy when the
             // scene's lightmap has a current bake for them.
             const GpuAssetCache::LightmappedMesh lmm = mr.lightmapped && !scattered && !lightmap_path.empty()
@@ -2049,7 +2051,8 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
                 assets.note_material_footprint(mr.material_asset,
                                                runtime::projected_pixels(camera, mesh.bounds.transformed(wt.matrix), assets.residency_settings().screen_height));
             if (!scattered) {
-                renderer.submit(mesh, m, wt.matrix, motion_id, lmm.uv_offset);
+                if (retain) renderer.submit_static(motion_id, mesh, m, wt.matrix, lmm.uv_offset);
+                else renderer.submit(mesh, m, wt.matrix, motion_id, lmm.uv_offset);
                 return;
             }
             if (!fv.runtime) return;
@@ -2200,7 +2203,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
                 assets.note_model_footprint(mr.mesh_asset, mr.mesh_index,
                                             runtime::projected_pixels(camera, drawn->bounds.transformed(wt.matrix),
                                                                       assets.residency_settings().screen_height));
-            emit(*drawn, m);
+            emit(*drawn, m, drawn == &gm.meshes[mr.mesh_index]);
             ++stats.meshes;
             return;
         }

@@ -708,6 +708,14 @@ struct RenderSettings {
     // view-depth slice (plus its transition band and filter footprint), not just the cascade's
     // bounding-sphere box. Lossless; off only to compare against the unculled image.
     bool shadow_receiver_culling{true};
+    // Retained static draws (ADR-0230): an object submitted with submit_static() whose mesh,
+    // material, transform and lightmap offset stay unchanged for `static_promote_frames`
+    // consecutive frames moves into a renderer-owned instance group shared with the other
+    // unchanged objects of its mesh, material and 256 m cell; it then costs a compare per frame
+    // instead of a draw. Off: submit_static() is submit(). Groups trade per-instance culling,
+    // LOD and LOD cross-fades for per-cluster ones (see create_instance_group).
+    bool retain_static_draws{false};
+    std::uint32_t static_promote_frames{8}; // 1..1000
     // Anisotropic filtering for material textures: at most this many taps along the texture's
     // stretched axis on surfaces seen at grazing angles (floors, roads, terrain). 1 (off), 2, 4, 8
     // or 16; other values round down. Low 2, Medium 4, High 8, Ultra 16. Nearest-filtered (pixel
@@ -856,6 +864,9 @@ struct SceneStats {
     // Retained instance groups (ADR-0162): clusters submitted / clusters passing the main-view
     // frustum test / instances those clusters draw in the main pass.
     std::uint32_t group_clusters{0}, group_clusters_visible{0}, group_instances_drawn{0};
+    // Retained static draws (ADR-0230): objects drawn from their retained group this frame,
+    // retained groups, and groups rebuilt this frame (objects joined, changed or went away).
+    std::uint32_t static_retained{0}, static_groups{0}, static_rebuilds{0};
     std::uint32_t skinned_draws{0};    // skinned submissions this frame
     std::uint32_t joints_uploaded{0};  // joint matrices in the per-frame palette
     std::uint32_t particle_batches{0}; // visible particle batches (one draw each)
@@ -974,6 +985,13 @@ public:
     // grows once. The copies are still culled, LOD-selected and shadowed per instance and merge
     // into instanced batches like any other identical draws.
     void submit_instances(const GpuMesh& mesh, const Material& material, std::span<const math::Mat4> models);
+    // Like submit(mesh, material, model, key, lightmap_uv_offset) for objects that rarely change
+    // (RenderSettings::retain_static_draws, ADR-0230). `key` identifies the object across frames
+    // (non-zero, unique per object, e.g. an entity id); it is also the motion id while the object
+    // is drawn individually. Blended materials always draw individually. Objects not submitted in
+    // a frame leave their group, which is rebuilt.
+    void submit_static(std::uint64_t key, const GpuMesh& mesh, const Material& material, const math::Mat4& model,
+                       math::Vec2 lightmap_uv_offset = {});
     // Retained instance groups (ADR-0162): many static copies of one mesh+material registered once.
     // The copies are ordered along a Morton curve and split into clusters of `cluster_size`;
     // their per-instance data lives in a GPU buffer written once (on the next render after
@@ -1386,6 +1404,41 @@ private:
     std::vector<std::uint32_t> material_table_; // open addressing: material index + 1, 0 = empty
     std::vector<std::uint64_t> material_keys_;  // material_key() per interned material
     std::vector<MaterialSignature> material_sigs_; // packed fields per interned material
+    void submit_packed(const GpuMesh& mesh, const Material& material, const MaterialSignature& sig, std::uint64_t mkey,
+                       const math::Mat4& model, std::uint64_t motion_id, math::Vec2 lightmap_uv_offset);
+    // Retained static draws (ADR-0230).
+    struct StaticRecord {
+        std::uint64_t key{0};
+        const GpuMesh* mesh{nullptr};
+        math::Aabb mesh_bounds;
+        std::uint32_t mesh_indices{0};
+        math::Mat4 model;
+        math::Vec2 lightmap_offset{};
+        MaterialSignature sig{};
+        std::uint64_t mkey{0};
+        Material material;
+        std::uint64_t seen_frame{0};
+        std::uint32_t stable{0};    // consecutive unchanged submissions
+        std::uint32_t bucket{~0u};  // retained group bucket, ~0u = drawn individually
+    };
+    struct StaticBucket {
+        std::uint64_t key{0}; // mesh, material and cell
+        const GpuMesh* mesh{nullptr};
+        std::vector<std::uint32_t> members; // record indices (compacted on rebuild)
+        std::uint32_t group{0};
+        std::uint32_t seen{0}; // members submitted this frame
+        bool dirty{false};
+    };
+    std::vector<StaticRecord> static_records_;
+    std::vector<std::uint32_t> static_free_;
+    std::unordered_map<std::uint64_t, std::uint32_t> static_index_;  // key -> record
+    std::vector<StaticBucket> static_buckets_;
+    std::vector<std::uint32_t> static_bucket_free_;
+    std::unordered_map<std::uint64_t, std::uint32_t> static_bucket_index_; // bucket key -> bucket
+    std::uint64_t static_flushed_frame_{~0ull};
+    std::vector<math::Mat4> static_models_;
+    std::vector<math::Vec2> static_offsets_;
+    void flush_static_groups();
     const Material* intern_material(const Material& m, std::uint64_t key);
     const Material* intern_material(const Material& m, const MaterialSignature& sig, std::uint64_t key);
     std::uint32_t lod_history_w_{0}, lod_history_h_{0};

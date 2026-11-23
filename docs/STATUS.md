@@ -3477,6 +3477,7 @@ Verified (2-vCPU sandbox, GCC 15.2, Release, lavapipe, `SDL_VIDEO_DRIVER=offscre
 - All 30 graphics `bin/victus_*_tests` SUCCESS (`victus_gpu_tests` 248 cases).
 - 16,384 per-frame cubes, steady state, three runs, serial → one worker (`JobSystem(0)` = 1 worker here): `render()` 3.11/3.47/3.29 → 2.70/2.54/2.60 ms; visibility stage 1.82/1.97/1.81 → 1.32/1.24/1.23 ms. Serial path unchanged versus ADR-0227 (1.8-1.9 ms).
 - Not verified: ThreadSanitizer on the graphics build (the TSan build is headless); machines with more than 2 vCPUs.
+- Commit: 095e225.
 - Next task: runtime frame benchmark for a 10k static mesh-renderer scene, then retained draw records in `extract_scene`.
 
 ## 2026-11-23 — Packed material signatures and runtime frame benchmark (ADR-0229)
@@ -3490,4 +3491,19 @@ Verified (2-vCPU sandbox, GCC 15.2, Release, lavapipe):
 - Callgrind, `extract_scene` over 3 frames: 29.1M → 21.3M instructions.
 - `victus_bench_runtime --reps 10` (13 frames averaged), serial: before (one run) transforms 0.087, extract 1.763, render 2.167, total 4.017 ms; after (three runs) extract 1.46/1.36/1.53 ms, render 1.94/1.97/1.97 ms, total 3.49/3.43/3.60 ms. With a one-worker job system render is 1.67-1.78 ms.
 - Not verified: other compilers; machines with more than 2 vCPUs.
+- Commit: 3004b6f.
 - Next task: retained static draws (`SceneRenderer::submit_static`, auto instance groups for unchanged renderers) to bring the 10k static scene under 1 ms.
+
+## 2026-11-23 — Retained static draws (ADR-0230)
+
+Built:
+- `SceneRenderer::submit_static(key, mesh, material, model, lightmap_offset)` and `RenderSettings::retain_static_draws` (default off) / `static_promote_frames` (default 8). Keyed opaque objects unchanged (mesh address, bounds and index count, field-compared material, transform, lightmap offset) for the promotion window join an automatic instance group per mesh, material and 256 m cell; dirty groups are rebuilt at the start of `render()`, unseen records are evicted after 120 frames. Statistics `static_retained`, `static_groups`, `static_rebuilds`.
+- `runtime::extract_scene` submits non-scattered, non-morphed mesh draws through `submit_static` keyed by their motion id.
+- `victus_bench_runtime` gains a `retained` variant; new test `gpu instance groups: retained static draws promote, leave on change and match per-frame submits` (promotion timing, group count, a moved object and a missing object leave with one rebuild each, images within 2/255 of the per-frame path, submitted counts equal).
+
+Verified (2-vCPU sandbox, GCC 15.2, Release, lavapipe, `SDL_VIDEO_DRIVER=offscreen VICTUS_REQUIRE_GPU=1`):
+- All 30 graphics `bin/victus_*_tests` SUCCESS (`victus_gpu_tests` 249 cases).
+- `victus_bench_runtime --reps 10`, three runs, 10,000 static cubes, serial without → with retention: render 2.05/1.96/2.03 → 0.32/0.29/0.30 ms; extract 1.50/1.47/1.51 → 1.54/1.33/1.44 ms; total 3.65/3.52/3.63 → 1.94/1.71/1.82 ms. 32 groups, 160 visible clusters, 0 rebuilds in steady state.
+- Rejected first attempt (one run): 32 m cells gave 800 groups and 752 batches, render 2.23 ms and total 3.71 ms, worse than not retaining.
+- Not verified: GPU cost of drawing whole clusters (no per-instance frustum culling inside a group) on physical GPUs; the 1 ms accept target is not reached yet (extraction still about 1.4 ms).
+- Next task: cut extraction cost (per-entity component lookups, material compare per retained object), then parallel batching.

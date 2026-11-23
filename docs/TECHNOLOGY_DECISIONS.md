@@ -2405,6 +2405,20 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 
 **Consequences:** Triangle counts stay inside the 140k-190k budget (the helmet cube-sphere goes from 30 to 27 quads per face to pay for the plates). Heights to the top of the helmet are unchanged (1.777 / 1.685 m). The plate pass continues piece by piece under this ADR.
 
+### ADR-0230: Retained static draws (`submit_static`, automatic instance groups)
+
+**Status:** Accepted (2026-11-23). Item 3 (retained draw records for unchanged renderers) of the CPU frame-architecture plan in docs/audits/CPU_FRAME_ARCHITECTURE_VS_UNITY_UNREAL.md.
+
+**Context:** After ADR-0229 a 10,000-cube static scene still spent about 3.5 ms of CPU per frame, of which about 1.9 ms in `SceneRenderer::render` (per-draw visibility, sort, batching and instance packing of 10,000 draws that are identical every frame). Unreal caches mesh draw commands for static primitives and only rebuilds them when a primitive changes; Unity's GPU Resident Drawer moves static renderers into BatchRendererGroup batches kept on the GPU. VICTUS already had retained instance groups (ADR-0162), but only for content the caller builds explicitly.
+
+**Decision:** (1) `SceneRenderer::submit_static(key, mesh, material, model, lightmap_offset)` records each keyed opaque object by key. (2) An object whose mesh (address, bounds, index count), material (field compare against the stored copy, no packing or hashing), transform and lightmap offset stay unchanged for `RenderSettings::static_promote_frames` frames joins a bucket of its mesh, material and 256 m cell. (3) At the start of `render()` dirty buckets (a member joined, changed or was not submitted this frame) are rebuilt with `create_instance_group`, and every bucket is drawn with `submit_instance_group`; unchanged retained objects cost a lookup and a compare per frame. (4) Changed, blended, duplicate-key or unbuildable objects draw individually through the ordinary path. (5) Records unseen for 120 frames are evicted. (6) `runtime::extract_scene` uses `submit_static` for non-scattered, non-morphed mesh draws keyed by their motion id. (7) Opt-in (`retain_static_draws`, default off) because groups cull, pick LODs and cross-fade per cluster instead of per object.
+
+**Alternatives:** 32 m cells (first attempt): 800 groups for the benchmark scene, each visible cluster its own draw; render rose to 2.2 ms (worse than not retaining). Retaining sorted draw lists without instance buffers: saves sorting only. GPU-driven culling of all instances: larger change, planned with GPU scene work.
+
+**Evidence:** listed in docs/STATUS.md under this ADR.
+
+**Consequences:** A retained object costs about one record (≈ 400 bytes with its material copy) plus its instance data on the GPU. Moving an object out of its group rebuilds that group (one upload of the group's instances), so objects that move every few frames should not be submitted as static; the promotion delay keeps them out. Statistics: `static_retained`, `static_groups`, `static_rebuilds`.
+
 ### ADR-0229: Packed material signatures for interning and a runtime frame benchmark
 
 **Status:** Accepted (2026-11-23). Follow-up of ADR-0227 on the per-submit path; item 3 groundwork of the CPU frame-architecture plan in docs/audits/CPU_FRAME_ARCHITECTURE_VS_UNITY_UNREAL.md.

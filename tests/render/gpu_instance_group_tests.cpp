@@ -196,3 +196,83 @@ TEST_CASE("gpu instance group: ids, validation and destruction") {
     r.destroy_instance_group(b); // twice: no effect
     ctx.destroy(cube);
 }
+
+TEST_CASE("gpu instance groups: retained static draws promote, leave on change and match per-frame submits") {
+    // ADR-0230: an opaque keyed submit_static unchanged for static_promote_frames joins a
+    // retained group of its mesh, material and cell; a changed or missing object leaves it.
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto& dev = ctx.device();
+    auto cube = ctx.create_mesh(make_cube({0.4f, 0.4f, 0.4f}), "retained_static_cube").value();
+    Material red, blue, glass;
+    red.base_color = {0.8f, 0.2f, 0.2f, 1};
+    blue.base_color = {0.2f, 0.3f, 0.8f, 1};
+    glass.base_color = {0.5f, 0.8f, 0.5f, 0.5f};
+    glass.blend = MaterialBlend::Alpha;
+    constexpr int kSide = 12;
+    constexpr std::uint32_t W = 160, H = 96;
+    const Camera3D cam = Camera3D::look_at({9, 14, 31}, {9, 0, 9});
+    const auto model = [](int i, float lift) {
+        return Mat4::translation({static_cast<float>(i % kSide) * 1.5f + 1.0f, 0.4f + lift, static_cast<float>(i / kSide) * 1.5f + 1.0f});
+    };
+    // `moved` lifts one object, `skip` leaves one out; frame-exact settings (no TAA).
+    const auto frame = [&](SceneRenderer& r, bool retain, int moved, int skip) {
+        RenderSettings s = RenderSettings::preset(QualityTier::High);
+        s.taa = false;
+        s.retain_static_draws = retain;
+        s.static_promote_frames = 3;
+        r.set_settings(s);
+        DirectionalLight sun;
+        sun.shadow_distance = 40;
+        r.begin(cam, sun, {});
+        for (int i = 0; i < kSide * kSide; ++i) {
+            if (i == skip) continue;
+            const Material& m = i % 13 == 0 ? glass : i % 2 ? red : blue;
+            r.submit_static(static_cast<std::uint64_t>(i + 1), cube, m, model(i, i == moved ? 1.0f : 0.0f));
+        }
+        auto target = test::make_target(W, H);
+        auto cmd = dev.begin_commands();
+        REQUIRE(r.render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+        cmd.submit_and_wait();
+        Shot shot{dev.read_texture(target).value(), r.stats()};
+        dev.destroy(target);
+        return shot;
+    };
+    auto plain_r = SceneRenderer::create(ctx);
+    auto kept_r = SceneRenderer::create(ctx);
+    REQUIRE(plain_r.ok());
+    REQUIRE(kept_r.ok());
+    SceneRenderer& plain = *plain_r.value();
+    SceneRenderer& kept = *kept_r.value();
+    const int opaque = kSide * kSide - (kSide * kSide + 12) / 13; // i % 13 == 0 are blended
+    // First seen, then unchanged for fewer than static_promote_frames frames: nothing retained.
+    for (int f = 0; f < 3; ++f) {
+        const Shot k = frame(kept, true, -1, -1);
+        CHECK(k.stats.static_retained == 0);
+    }
+    Shot k = frame(kept, true, -1, -1);
+    Shot p = frame(plain, false, -1, -1);
+    CHECK(k.stats.static_retained == static_cast<std::uint32_t>(opaque));
+    CHECK(k.stats.static_groups == 2); // two opaque materials, one 256 m cell
+    CHECK(k.stats.static_rebuilds == 2);
+    CHECK(p.stats.static_retained == 0);
+    CHECK(k.stats.submitted == p.stats.submitted);
+    CHECK(max_diff(p.px, k.px) <= 2);
+    // Steady: nothing rebuilt.
+    k = frame(kept, true, -1, -1);
+    CHECK(k.stats.static_rebuilds == 0);
+    CHECK(k.stats.static_retained == static_cast<std::uint32_t>(opaque));
+    // A moved object leaves its group (one rebuild) and draws individually where it now is.
+    k = frame(kept, true, 1, -1);
+    p = frame(plain, false, 1, -1);
+    CHECK(k.stats.static_rebuilds == 1);
+    CHECK(k.stats.static_retained == static_cast<std::uint32_t>(opaque - 1));
+    CHECK(max_diff(p.px, k.px) <= 2);
+    // An object no longer submitted leaves too: it must not be drawn from the retained buffer.
+    k = frame(kept, true, 1, 2);
+    p = frame(plain, false, 1, 2);
+    CHECK(k.stats.static_rebuilds == 1);
+    CHECK(k.stats.static_retained == static_cast<std::uint32_t>(opaque - 2));
+    CHECK(max_diff(p.px, k.px) <= 2);
+    ctx.destroy(cube);
+}

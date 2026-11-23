@@ -92,13 +92,27 @@ int main(int argc, char** argv) {
                         (transforms_ms + extract_ms + render_ms) / frames, es.meshes, renderer->stats().visible,
                         renderer->stats().main_batches);
         };
-        for (const bool use_jobs : {false, true}) {
+        struct Variant {
+            const char* name;
+            const char* label;
+            bool jobs, retain;
+        };
+        for (const Variant& v : {Variant{"runtime/frame_10k_static_cpu_gpu", "serial", false, false},
+                                 Variant{"runtime/frame_10k_static_jobs_cpu_gpu", "jobs", true, false},
+                                 Variant{"runtime/frame_10k_static_retained_cpu_gpu", "retained", false, true}}) {
             jobs::JobSystem workers(0);
-            renderer->set_job_system(use_jobs ? &workers : nullptr);
+            renderer->set_job_system(v.jobs ? &workers : nullptr);
+            render::RenderSettings rs = render::RenderSettings::preset(render::QualityTier::Low);
+            rs.retain_static_draws = v.retain; // ADR-0230
+            renderer->set_settings(rs);
+            for (int i = 0; i < 10; ++i) frame(); // promotes the unchanged renderers
             transforms_ms = extract_ms = render_ms = 0;
             frames = 0;
-            h.run(use_jobs ? "runtime/frame_10k_static_jobs_cpu_gpu" : "runtime/frame_10k_static_cpu_gpu", kSide * kSide, frame);
-            report(use_jobs ? "jobs" : "serial");
+            h.run(v.name, kSide * kSide, frame);
+            report(v.label);
+            if (v.retain)
+                std::printf("retained: %u objects in %u groups, %u rebuilds in the last frame\n", renderer->stats().static_retained,
+                            renderer->stats().static_groups, renderer->stats().static_rebuilds);
             renderer->set_job_system(nullptr);
         }
         cache.clear();
