@@ -2600,3 +2600,17 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 **Evidence:** STATUS.md entry for the commit (template renders under Xvfb, `victus_project_tests`).
 
 **Consequences:** New projects from those templates start with long side-lit shadows and a correct exposure. Existing projects keep their scene files.
+
+### ADR-0238: Lava as a cracked crust with HDR molten cracks
+
+**Status:** Accepted (2026-11-23). Third item of the look pass.
+
+**Context:** The no-code 3D template's lava was a product of sines thresholded into round pastel blobs with a uniform 0.9 emissive: it read as a polka-dot floor rather than molten rock, and nothing in it crossed the bloom threshold. Real lava (and the look in shipped games) is a mostly dark, rough cooled crust broken by thin, very bright cracks whose width and heat vary slowly over the surface.
+
+**Decision:** `assets/shaders/lava.vshader` uses 4-octave value-noise fBm with Inigo Quilez-style domain warping (two warp fields advected by time). The ridge of the warped field (1 - |2n - 1|) marks plate boundaries; a smoothstep near the ridge gives thin cracks, widened and brightened by a slow low-frequency heat field. Crust: base colour 0.03-0.09, roughness 0.92, a faint heat-squared ember glow; cracks: emissive hot colour x 7 (well above bloom threshold 1 at exposure 0.6), roughness 0.45. Same material parameters layout; four `lava_` helpers live in the shader file.
+
+**Alternatives:** (1) A flow-mapped texture: needs authored maps and a licence; the procedural version is resolution-free. (2) Voronoi cracks: sharper cells but about twice the ALU for nine cell lookups per octave.
+
+**Evidence:** STATUS.md entry for the commit.
+
+**Consequences:** The lava pool reads as molten under the bright template sun and blooms. About 14 value-noise evaluations per lava pixel; only the lava plane pays it.

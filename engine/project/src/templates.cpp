@@ -242,17 +242,42 @@ constexpr const char* kLavaShaderPath = "assets/shaders/lava.vshader";
 constexpr const char* kLavaShaderUuid = "5c0a7e11-7f1b-4c2e-9a3d-c4a7e5b0f006";
 constexpr const char* kLavaMaterialPath = "assets/materials/lava.vmat";
 constexpr const char* kLavaMaterialUuid = "5c0a7e11-7f1b-4c2e-9a3d-c4a7e5b0f007";
-constexpr const char* kLavaShader = R"(// Lava surface shader (used by materials/lava.vmat): glowing bands that drift slowly.
-// params[0] = hot colour (rgb) + glow strength (w), params[1] = cool colour (rgb) + flow speed (w)
+constexpr const char* kLavaShader = R"(// Lava surface shader (used by materials/lava.vmat): a dark cooled crust broken by
+// glowing cracks of molten rock that slowly flow (domain-warped value noise, ADR-0238).
+// params[0] = hot colour (rgb) + crack glow strength (w), params[1] = crust glow colour (rgb) + flow speed (w)
+float lava_hash(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+float lava_noise(vec2 p) {
+    vec2 c = floor(p), f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(lava_hash(c), lava_hash(c + vec2(1, 0)), u.x),
+               mix(lava_hash(c + vec2(0, 1)), lava_hash(c + vec2(1, 1)), u.x), u.y);
+}
+float lava_fbm(vec2 p) {
+    float v = 0.0, a = 0.5;
+    for (int k = 0; k < 4; ++k) {
+        v += a * lava_noise(p);
+        p = mat2(1.6, 1.2, -1.2, 1.6) * p;
+        a *= 0.5;
+    }
+    return v;
+}
 void surface(SurfaceInput i, inout Surface s) {
-    vec2 p = i.world_position.xz * 0.35;
+    vec2 p = i.world_position.xz * 0.45;
     float t = i.time * i.params[1].w;
-    float n = sin(p.x * 3.1 + t) * sin(p.y * 2.7 - t * 1.3) + 0.5 * sin((p.x + p.y) * 5.3 + t * 2.0);
-    n = smoothstep(0.45, 0.95, 0.5 + 0.35 * n);
-    vec3 c = mix(i.params[1].rgb, i.params[0].rgb, n);
-    s.base_color = c * 0.25;
-    s.emissive += c * i.params[0].w;
-    s.roughness = 0.7;
+    vec2 q = vec2(lava_fbm(p + vec2(0.0, t * 0.3)), lava_fbm(p + vec2(5.2, 1.3) - vec2(t * 0.2, 0.0)));
+    float n = lava_fbm(p + 2.2 * q);
+    float ridge = 1.0 - abs(2.0 * n - 1.0);      // 1 along the cracks between crust plates
+    float heat = smoothstep(0.35, 0.75, lava_fbm(p * 0.5 + q - vec2(t * 0.1)));
+    float crack = smoothstep(0.9 - 0.08 * heat, 1.0, ridge); // hotter regions have wider, brighter cracks
+    crack *= 0.4 + 0.6 * heat;
+    vec3 crust = mix(vec3(0.035, 0.03, 0.028), vec3(0.09, 0.05, 0.035), q.x);
+    s.base_color = mix(crust, vec3(0.2, 0.06, 0.02), crack);
+    s.emissive += i.params[0].rgb * i.params[0].w * crack + i.params[1].rgb * heat * heat * (1.0 - crack);
+    s.roughness = mix(0.92, 0.45, crack);
     s.metallic = 0.0;
 }
 )";
@@ -261,8 +286,8 @@ std::string lava_material() {
     assets::MaterialAsset m;
     m.base_color = {1, 1, 1, 1};
     (void)Uuid::parse(kLavaShaderUuid, m.shader);
-    m.shader_params[0] = {1.0f, 0.36f, 0.04f, 0.9f};
-    m.shader_params[1] = {0.12f, 0.01f, 0.0f, 0.35f};
+    m.shader_params[0] = {1.0f, 0.32f, 0.04f, 7.0f};
+    m.shader_params[1] = {0.16f, 0.025f, 0.004f, 0.35f};
     return json::stringify(m.to_json(), true) + "\n";
 }
 

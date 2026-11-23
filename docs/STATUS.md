@@ -3617,3 +3617,13 @@ Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`):
 - `ctest -j2 -R "project|cli|export|editor"` under Xvfb: all passed (`victus_cli_render_compare` skipped as usual).
 - Next task: lava surface (domain-warped noise with HDR emissive cracks) in the no-code 3D template.
 
+## 2026-11-23 — Cracked-crust lava (ADR-0238)
+
+Built:
+- `engine/project/src/templates.cpp`: the no-code 3D template's `lava.vshader` is domain-warped fBm with thin HDR cracks between dark crust plates and a slow heat field; `lava.vmat` crack glow 7 and a dim ember crust colour.
+
+Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`):
+- `victus new --template nocode3d` then `victus check`: 1 shader, 8 materials, 0 problems; `victus run --quality high --frames 40 --screenshot` under Xvfb on lavapipe: mostly dark crust with bright, blooming cracks instead of pastel blobs.
+- `ctest -R "victus_project_tests|victus_export_tests"`: passed.
+- Next task: distance fog and aerial perspective in the HDR-sky templates so the ground no longer ends in a hard edge.
+
