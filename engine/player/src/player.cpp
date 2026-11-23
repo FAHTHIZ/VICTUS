@@ -242,6 +242,9 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     (*scripts)->set_current_scene(rel);
     // Worker threads for physics (and future parallel systems); 0 = hardware_concurrency - 1.
     jobs::JobSystem workers(0);
+    // Per-draw visibility of large frames runs on the same pool (ADR-0228); the renderer only uses
+    // it inside render(), which never runs after `workers` is destroyed.
+    view->renderer().set_job_system(&workers);
     // Declared after `workers`, so the loader detaches (waiting for decodes) before the pool dies.
     struct DetachLoader {
         runtime::GpuAssetCache& cache;
@@ -515,6 +518,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         if (!v) return make_error(ErrorCode::DeviceError, reason + "; " + v.error().message);
         view = std::move(v).value();
         view->renderer().set_settings(settings);
+        view->renderer().set_job_system(&workers);
         ++report.device_recoveries;
         VICTUS_LOG_INFO("player", "GPU device recreated: {}", dev->capabilities().driver_name);
         return {};

@@ -25,6 +25,10 @@
 #include <utility>
 #include <vector>
 
+namespace victus::jobs {
+class JobSystem;
+}
+
 namespace victus::render {
 
 struct Camera3D {
@@ -916,6 +920,9 @@ public:
     SceneRenderer& operator=(const SceneRenderer&) = delete;
 
     void set_settings(const RenderSettings& settings) noexcept { settings_ = settings.sanitized(); }
+    // Job system for per-draw visibility on large frames (ADR-0228); null (the default) runs it on
+    // the calling thread. Results are identical either way. Must outlive the renderer or be reset.
+    void set_job_system(jobs::JobSystem* jobs) noexcept { jobs_ = jobs; }
     [[nodiscard]] const RenderSettings& settings() const noexcept { return settings_; }
     // Probe captures: linear scene radiance (no exposure, tonemapping, grading or FXAA).
     void set_capture_mode(bool on) noexcept { capture_mode_ = on; }
@@ -1414,8 +1421,17 @@ private:
     std::vector<ParticleBatch> particle_batches_;
     // Per-frame draw lists, batches and upload staging, kept between frames so render() reuses their
     // capacity instead of allocating (and, for the large ones, mapping fresh pages) every frame.
+    // Per-draw visibility result written by the (possibly parallel) classification phase.
+    struct DrawVisibility {
+        std::uint8_t cascades{0};        // bit c: casts into directional cascade c
+        std::uint8_t history_lod{0};     // unbiased pick recorded in the LOD history
+        std::uint8_t fade_from{0}, fade_step{0}, fade_lod{0};
+        bool held{false}, rain{false}, in_view{false};
+        std::uint32_t receiver_culled{0}; // cascades skipped by shadow receiver culling
+    };
     struct FrameScratch;
     std::unique_ptr<FrameScratch> scratch_;
+    jobs::JobSystem* jobs_{nullptr};
     rhi::BufferHandle particle_buffer_;
     std::uint32_t particle_capacity_{0}; // in particles
     std::vector<GpuParticleEmitter> gpu_emitters_; // this frame's submissions

@@ -3465,3 +3465,16 @@ Verified (2-vCPU sandbox, GCC 15.2, Release, lavapipe, `SDL_VIDEO_DRIVER=offscre
 - Not verified: physical GPUs, multi-core machines.
 - Commit: 134d1d5.
 - Next task: parallel per-draw visibility (JobSystem) and retained draw records in runtime extraction.
+
+## 2026-11-23 — Two-phase per-draw visibility on the job system (ADR-0228)
+
+Built:
+- `SceneRenderer` visibility split into a classification phase (world bounds, LOD and cross-fade state, cascade and receiver culling, rain view, frustum, probe; writes only its own `Draw` and a `DrawVisibility` record) and a serial in-order gather (LOD history, caster/visible/transparent lists, fade copies, statistics). `set_job_system()` runs classification as `parallel_for` in 1,024-draw chunks for frames of at least 2,048 draws.
+- The player hands its worker pool to the renderer (also after device recovery).
+- `victus_bench_render` prints a `per-frame jobs` steady-state line; new test `gpu instancing: parallel per-draw visibility matches the serial pass exactly` (three frames, 2,305 draws with LOD history, transparent and shadow-only materials; statistics and pixels equal).
+
+Verified (2-vCPU sandbox, GCC 15.2, Release, lavapipe, `SDL_VIDEO_DRIVER=offscreen VICTUS_REQUIRE_GPU=1`):
+- All 30 graphics `bin/victus_*_tests` SUCCESS (`victus_gpu_tests` 248 cases).
+- 16,384 per-frame cubes, steady state, three runs, serial → one worker (`JobSystem(0)` = 1 worker here): `render()` 3.11/3.47/3.29 → 2.70/2.54/2.60 ms; visibility stage 1.82/1.97/1.81 → 1.32/1.24/1.23 ms. Serial path unchanged versus ADR-0227 (1.8-1.9 ms).
+- Not verified: ThreadSanitizer on the graphics build (the TSan build is headless); machines with more than 2 vCPUs.
+- Next task: runtime frame benchmark for a 10k static mesh-renderer scene, then retained draw records in `extract_scene`.

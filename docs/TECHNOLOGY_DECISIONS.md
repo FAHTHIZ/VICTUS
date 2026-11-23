@@ -2405,6 +2405,20 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 
 **Consequences:** Triangle counts stay inside the 140k-190k budget (the helmet cube-sphere goes from 30 to 27 quads per face to pay for the plates). Heights to the top of the helmet are unchanged (1.777 / 1.685 m). The plate pass continues piece by piece under this ADR.
 
+### ADR-0228: Two-phase per-draw visibility on the job system
+
+**Status:** Accepted (2026-11-23). The parallel-culling follow-up of item 4 of the CPU frame-architecture plan in docs/audits/CPU_FRAME_ARCHITECTURE_VS_UNITY_UNREAL.md.
+
+**Context:** After ADR-0227 the largest CPU stage for 16,384 per-frame draws was `render.cpu.visibility` (about 1.8 ms on the 2-vCPU sandbox), a single loop that for every draw computes world bounds, picks LOD and cross-fade state from the previous frame's history, tests every directional cascade with shadow receiver culling, the rain view and the camera frustum, and finds the reflection probe, while appending to shared caster and visible lists, inserting into the next frame's LOD history and incrementing statistics. Unreal computes view relevance and visibility in parallel tasks and gathers the results afterwards; Unity's BatchRendererGroup culling callbacks run as Burst jobs over chunks. VICTUS ran the loop on the calling thread only.
+
+**Decision:** (1) The loop is split. The classification phase writes only the draw it handles and a small `DrawVisibility` record (cascade bitmask, LOD history pick and fade state, held/rain/in-view flags, receiver-culled count); it reads the previous LOD history, settings, camera and cascade data, which nothing writes during the phase. (2) A serial gather phase walks draws in submission order and does every shared write: LOD history inserts, caster/rain/visible/transparent list appends, cross-fade copies and statistics. Lists, history and counters are therefore identical to a serial pass, so sort order, batching and images do not depend on the thread count. (3) `SceneRenderer::set_job_system(jobs::JobSystem*)`; with a pool that has workers and at least 2,048 draws, classification runs as `parallel_for` in 1,024-draw chunks, otherwise inline. (4) The player passes its existing worker pool (also after device recovery).
+
+**Alternatives:** Per-thread lists merged afterwards: saves the gather walk but makes list order depend on chunking unless merged in chunk order, and the history table would need per-thread tables or atomics; the serial gather is a fraction of the classification cost. Atomic counters and lock-free appends: non-deterministic order. Parallelising the sort and batching stages too: later work; batching depends on sorted order.
+
+**Evidence:** listed in docs/STATUS.md under this ADR.
+
+**Consequences:** One extra 12-byte record per draw per frame (reused storage). Callers without a job system see the same serial behaviour as before. Covered by `gpu instancing: parallel per-draw visibility matches the serial pass exactly` (three frames of 2,305 draws with LOD history, transparency and shadow-only casters; statistics and pixels equal).
+
 ### ADR-0227: Per-frame material interning and state-ranked radix draw sorting
 
 **Status:** Accepted (2026-11-23). Items 4 (sort keys) and part of 3 (lighter per-draw records) of the CPU frame-architecture plan in docs/audits/CPU_FRAME_ARCHITECTURE_VS_UNITY_UNREAL.md.

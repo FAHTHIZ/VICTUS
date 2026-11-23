@@ -2,6 +2,7 @@
 #include "victus/render/scene_renderer.hpp"
 
 #include "victus/core/log.hpp"
+#include "victus/core/jobs.hpp"
 #include "victus/core/profiler.hpp"
 #include "victus/render/builtin_shaders.hpp"
 #include "victus/render/light_clusters.hpp"
@@ -522,6 +523,7 @@ struct SceneRenderer::FrameScratch {
     std::array<std::vector<Batch>, 4> shadow_batches;
     std::vector<const Draw*> rain_casters;
     std::vector<Batch> rain_batches;
+    std::vector<DrawVisibility> visibility; // per draws_ entry, this frame
     std::vector<std::vector<Batch>> local_batches;
     std::vector<Vec4> occl_bounds;
     std::vector<rhi::IndexedIndirectCommand> occl_args;
@@ -2553,110 +2555,141 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             return static_cast<std::uint8_t>(std::min<std::uint32_t>(lod + S.foliage_lod_bias, d.mesh->lod_count - 1u));
         return lod;
     };
-    for (Draw& d : draws_) {
-        const Aabb world = d.has_bounds() ? d.world_bounds : d.mesh->bounds.transformed(d.model);
-        const bool blended = d.material->blend != MaterialBlend::Opaque;
-        LodHistory::Entry previous;
-        if (lod_history && d.motion_id != 0) previous = lod_prev_.entry(lod_key(d));
-        std::uint8_t stateless = 0;
-        d.lod = select_lod(*d.mesh, d.model, world, camera_.position, lod_pixels_per_unit, S, previous.lod, &stateless);
-        if (previous.lod >= 0 && d.lod != stateless) ++stats_.lod_held;
-        // Cross-fade: a level change starts a fade from the previous level; a fade in progress
-        // advances one step per frame and ends after lod_fade_frames.
-        std::uint8_t fade_from = 0, fade_step = 0;
-        d.lod_fade = 0.0f;
-        if (S.lod_fade_frames > 0 && previous.lod >= 0 && !blended && d.group < 0 && !d.material->shadow_only) {
-            if (d.lod != previous.lod) {
-                fade_from = static_cast<std::uint8_t>(previous.lod);
-                fade_step = 1;
-            } else if (previous.step > 0 && previous.step < S.lod_fade_frames) {
-                fade_from = previous.from;
-                fade_step = static_cast<std::uint8_t>(previous.step + 1);
+    // Two phases (ADR-0228): per-draw classification touches only its own Draw and result slot, so it
+    // runs on the job system for large frames; list building, LOD history and statistics then run
+    // serially in submission order, so every list, counter and history entry matches a serial pass.
+    auto& vis = F.visibility;
+    vis.resize(draws_.size());
+    const auto classify = [&](std::size_t first, std::size_t last) {
+        for (std::size_t i = first; i < last; ++i) {
+            Draw& d = draws_[i];
+            DrawVisibility& r = vis[i];
+            r = {};
+            const Aabb world = d.has_bounds() ? d.world_bounds : d.mesh->bounds.transformed(d.model);
+            const bool blended = d.material->blend != MaterialBlend::Opaque;
+            LodHistory::Entry previous;
+            if (lod_history && d.motion_id != 0) previous = lod_prev_.entry(lod_key(d));
+            std::uint8_t stateless = 0;
+            d.lod = select_lod(*d.mesh, d.model, world, camera_.position, lod_pixels_per_unit, S, previous.lod, &stateless);
+            r.held = previous.lod >= 0 && d.lod != stateless;
+            // Cross-fade: a level change starts a fade from the previous level; a fade in progress
+            // advances one step per frame and ends after lod_fade_frames.
+            std::uint8_t fade_from = 0, fade_step = 0;
+            d.lod_fade = 0.0f;
+            if (S.lod_fade_frames > 0 && previous.lod >= 0 && !blended && d.group < 0 && !d.material->shadow_only) {
+                if (d.lod != previous.lod) {
+                    fade_from = static_cast<std::uint8_t>(previous.lod);
+                    fade_step = 1;
+                } else if (previous.step > 0 && previous.step < S.lod_fade_frames) {
+                    fade_from = previous.from;
+                    fade_step = static_cast<std::uint8_t>(previous.step + 1);
+                }
+                if (fade_step > 0 && fade_from == d.lod) fade_step = 0;
             }
-            if (fade_step > 0 && fade_from == d.lod) fade_step = 0;
-        }
-        if (lod_record && d.motion_id != 0) lod_next_.insert(lod_key(d), d.lod, fade_from, fade_step);
-        // The history keeps the unbiased pick, so the hysteresis bands stay those of the budget.
-        d.lod = foliage_biased(d, d.lod);
-        std::uint8_t fade_lod = d.lod;
-        if (fade_step > 0) {
-            fade_lod = foliage_biased(d, fade_from);
-            if (fade_lod != d.lod)
-                d.lod_fade = static_cast<float>(fade_step) / static_cast<float>(S.lod_fade_frames + 1u);
-        }
-        d.shadow_lod = d.lod;
-        if (S.force_lod < 0 && S.lods && d.mesh->lod_count > 1)
-            d.shadow_lod = static_cast<std::uint8_t>(std::min<std::uint32_t>(d.lod + S.shadow_lod_bias, d.mesh->lod_count - 1u));
-        if (d.material->cast_shadows && !blended) {
-            bool any = false;
-            bool have_light_box = false;
-            math::Aabb light_box;
-            for (std::uint32_t c = 0; c < cascade_count_; ++c) {
-                if (!cascade_frustum[c].intersects(world)) continue;
-                if (S.shadow_receiver_culling) {
-                    if (!have_light_box) {
-                        light_box = world.transformed(cascade_light_view_);
-                        have_light_box = true;
-                    }
-                    // Its shadow falls along -Z in light view space: it can only darken receivers
-                    // it overlaps in x/y and that lie no further upstream (+Z) than its top.
-                    const math::Aabb& r = cascade_receivers_[c];
-                    bool reaches = !(light_box.max.x < r.min.x || light_box.min.x > r.max.x ||
-                                     light_box.max.y < r.min.y || light_box.min.y > r.max.y ||
-                                     light_box.max.z < r.min.z);
-                    if (reaches) {
-                        // Shadow volume: the box swept along the sun by its height above the
-                        // lowest receiver. Outside a slice plane, and not swept back in, is culled.
-                        const float sweep = light_box.max.z - r.min.z;
-                        const Vec3 bc = world.center(), be = world.extents();
-                        for (const auto& p : cascade_slices_[c].planes) {
-                            const float top = p.x * bc.x + p.y * bc.y + p.z * bc.z + p.w + be.x * std::fabs(p.x) +
-                                              be.y * std::fabs(p.y) + be.z * std::fabs(p.z);
-                            const Vec3& sd = cascade_sun_dir_;
-                            const float toward = p.x * sd.x + p.y * sd.y + p.z * sd.z;
-                            if (std::max(top, top + sweep * toward) < 0.0f) {
-                                reaches = false;
-                                break;
+            r.history_lod = d.lod;
+            r.fade_from = fade_from;
+            r.fade_step = fade_step;
+            // The history keeps the unbiased pick, so the hysteresis bands stay those of the budget.
+            d.lod = foliage_biased(d, d.lod);
+            r.fade_lod = d.lod;
+            if (fade_step > 0) {
+                r.fade_lod = foliage_biased(d, fade_from);
+                if (r.fade_lod != d.lod)
+                    d.lod_fade = static_cast<float>(fade_step) / static_cast<float>(S.lod_fade_frames + 1u);
+            }
+            d.shadow_lod = d.lod;
+            if (S.force_lod < 0 && S.lods && d.mesh->lod_count > 1)
+                d.shadow_lod = static_cast<std::uint8_t>(std::min<std::uint32_t>(d.lod + S.shadow_lod_bias, d.mesh->lod_count - 1u));
+            if (d.material->cast_shadows && !blended) {
+                bool have_light_box = false;
+                math::Aabb light_box;
+                for (std::uint32_t c = 0; c < cascade_count_; ++c) {
+                    if (!cascade_frustum[c].intersects(world)) continue;
+                    if (S.shadow_receiver_culling) {
+                        if (!have_light_box) {
+                            light_box = world.transformed(cascade_light_view_);
+                            have_light_box = true;
+                        }
+                        // Its shadow falls along -Z in light view space: it can only darken receivers
+                        // it overlaps in x/y and that lie no further upstream (+Z) than its top.
+                        const math::Aabb& rb = cascade_receivers_[c];
+                        bool reaches = !(light_box.max.x < rb.min.x || light_box.min.x > rb.max.x ||
+                                         light_box.max.y < rb.min.y || light_box.min.y > rb.max.y ||
+                                         light_box.max.z < rb.min.z);
+                        if (reaches) {
+                            // Shadow volume: the box swept along the sun by its height above the
+                            // lowest receiver. Outside a slice plane, and not swept back in, is culled.
+                            const float sweep = light_box.max.z - rb.min.z;
+                            const Vec3 bc = world.center(), be = world.extents();
+                            for (const auto& p : cascade_slices_[c].planes) {
+                                const float top = p.x * bc.x + p.y * bc.y + p.z * bc.z + p.w + be.x * std::fabs(p.x) +
+                                                  be.y * std::fabs(p.y) + be.z * std::fabs(p.z);
+                                const Vec3& sd = cascade_sun_dir_;
+                                const float toward = p.x * sd.x + p.y * sd.y + p.z * sd.z;
+                                if (std::max(top, top + sweep * toward) < 0.0f) {
+                                    reaches = false;
+                                    break;
+                                }
                             }
                         }
+                        if (!reaches) {
+                            ++r.receiver_culled;
+                            continue;
+                        }
                     }
-                    if (!reaches) {
-                        ++stats_.shadow_receiver_culled;
-                        continue;
-                    }
+                    d.cascade_lod[c] = d.shadow_lod;
+                    if (S.force_lod < 0 && S.lods)
+                        d.cascade_lod[c] =
+                            cascade_shadow_lod(*d.mesh, d.model, cascade_texel_[c], S.shadow_lod_texels, d.shadow_lod);
+                    r.cascades = static_cast<std::uint8_t>(r.cascades | (1u << c));
                 }
-                d.cascade_lod[c] = d.shadow_lod;
-                if (S.force_lod < 0 && S.lods)
-                    d.cascade_lod[c] =
-                        cascade_shadow_lod(*d.mesh, d.model, cascade_texel_[c], S.shadow_lod_texels, d.shadow_lod);
-                casters[c].push_back(&d);
-                any = true;
             }
-            if (any) ++stats_.shadow_casters;
+            r.rain = rain_occlusion && !blended && rain_frustum.intersects(world);
+            if (d.material->shadow_only) continue; // casts, never drawn
+            r.in_view = frustum.intersects(world);
+            if (!r.in_view) continue;
+            const Vec3 c = world.center();
+            d.distance = length(c - camera_.position);
+            d.probe = -1;
+            float best = std::numeric_limits<float>::max();
+            for (std::size_t p = 0; p < probes_.size(); ++p) {
+                const Aabb& b = probes_[p].box;
+                if (c.x < b.min.x || c.y < b.min.y || c.z < b.min.z || c.x > b.max.x || c.y > b.max.y || c.z > b.max.z) continue;
+                const Vec3 e = b.max - b.min;
+                const float volume = e.x * e.y * e.z;
+                if (volume < best) {
+                    best = volume;
+                    d.probe = static_cast<int>(p);
+                }
+            }
         }
-        if (rain_occlusion && !blended && rain_frustum.intersects(world)) F.rain_casters.push_back(&d);
+    };
+    constexpr std::size_t kParallelVisibilityGrain = 1024;
+    if (jobs_ && jobs_->worker_count() > 0 && draws_.size() >= 2 * kParallelVisibilityGrain)
+        jobs_->parallel_for(0, draws_.size(), kParallelVisibilityGrain, classify);
+    else
+        classify(0, draws_.size());
+    for (std::size_t i = 0; i < draws_.size(); ++i) {
+        Draw& d = draws_[i];
+        const DrawVisibility& r = vis[i];
+        if (r.held) ++stats_.lod_held;
+        if (lod_record && d.motion_id != 0) lod_next_.insert(lod_key(d), r.history_lod, r.fade_from, r.fade_step);
+        stats_.shadow_receiver_culled += r.receiver_culled;
+        if (r.cascades != 0) {
+            for (std::uint32_t c = 0; c < cascade_count_; ++c)
+                if (r.cascades & (1u << c)) casters[c].push_back(&d);
+            ++stats_.shadow_casters;
+        }
+        if (r.rain) F.rain_casters.push_back(&d);
         if (d.material->shadow_only) continue; // casts, never drawn
-        if (!frustum.intersects(world)) {
+        if (!r.in_view) {
             ++stats_.culled;
             continue;
         }
+        const bool blended = d.material->blend != MaterialBlend::Opaque;
         if (d.group >= 0) {
             ++stats_.group_clusters_visible;
             stats_.group_instances_drawn += d.cluster_count;
-        }
-        d.distance = length(world.center() - camera_.position);
-        d.probe = -1;
-        float best = std::numeric_limits<float>::max();
-        const Vec3 c = world.center();
-        for (std::size_t p = 0; p < probes_.size(); ++p) {
-            const Aabb& b = probes_[p].box;
-            if (c.x < b.min.x || c.y < b.min.y || c.z < b.min.z || c.x > b.max.x || c.y > b.max.y || c.z > b.max.z) continue;
-            const Vec3 e = b.max - b.min;
-            const float volume = e.x * e.y * e.z;
-            if (volume < best) {
-                best = volume;
-                d.probe = static_cast<int>(p);
-            }
         }
         if (d.probe >= 0) ++stats_.probe_draws;
         if (d.lod > 0) ++stats_.lod_draws;
@@ -2672,7 +2705,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             // The outgoing level fills exactly the pixels the incoming one leaves out. It casts no
             // shadow (the shadow passes switch at once) and is not drawn in the depth pre-pass.
             Draw& out = lod_fade_out_.emplace_back(d);
-            out.lod = fade_lod;
+            out.lod = r.fade_lod;
             out.lod_fade = -d.lod_fade;
             ++stats_.lod_fading;
             stats_.triangles += d.mesh->lods[out.lod].index_count / 3;
