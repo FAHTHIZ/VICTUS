@@ -336,7 +336,7 @@ void Editor::draw_material_editor() {
         inherit_button(F::UvScale);
         if (mark(ImGui::DragFloat2("Offset", of, 0.01f), F::UvOffset)) m.uv_offset = {of[0], of[1]};
         inherit_button(F::UvOffset);
-        mark(ImGui::Checkbox("Triplanar (world space)", &m.triplanar), F::Triplanar);
+        mark(ImGui::Checkbox("Triplanar", &m.triplanar), F::Triplanar);
         ImGui::SetItemTooltip("Project the textures along the world axes instead of using the mesh's UVs, so scaled "
                               "blocks and rocks tile evenly. Tiling then counts repeats per metre.");
         inherit_button(F::Triplanar);
@@ -346,6 +346,10 @@ void Editor::draw_material_editor() {
                  F::TriplanarSharpness);
             ImGui::SetItemTooltip("How quickly one projection gives way to the next on curved surfaces");
             inherit_button(F::TriplanarSharpness);
+            mark(ImGui::Checkbox("Object Space", &m.triplanar_object), F::TriplanarObject);
+            ImGui::SetItemTooltip("Project along the object's own axes so the texture moves, turns and bends with it "
+                                  "(props, vehicles, characters). Off: world axes, for level geometry");
+            inherit_button(F::TriplanarObject);
         }
         mark(ImGui::SliderFloat("Anti-Tiling", &m.anti_tiling, 0.0f, 1.0f), F::AntiTiling);
         ImGui::SetItemTooltip("Breaks up visible texture repeats: large-scale brightness variation, and above 0.5 a "

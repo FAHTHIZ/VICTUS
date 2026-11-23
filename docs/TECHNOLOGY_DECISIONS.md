@@ -2748,3 +2748,26 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 - Displaced geometry stays drawn, and keeps casting shadows, while any part of it can be on screen. This holds as long as the material declares an offset at least as large as the function's reach. Too small a value still pops; too large costs culling efficiency.
 - LOD selection uses the grown bounds too, so a large offset selects slightly finer LODs.
 - Existing materials keep 0 and behave as before.
+
+### ADR-0246: Object-space triplanar mapping
+
+**Status:** Accepted (2026-11-24).
+
+**Context:** World-space triplanar mapping (ADR-0197) projects textures from the fragment's world position, so the texture swims over any object that moves or rotates. The 3D template's crates and moving platforms kept flat colours for that reason. Unreal's material functions (`WorldAlignedTexture` with an object-local position) and Unity's Shader Graph Triplanar node with Object space both offer object-space projection.
+
+**Decision:**
+- Every PBR vertex variant (mesh, skinned, lightmap and surface vertex templates, not the shadow or motion variants) writes `v_object` at location 6. `xyz` is the rest position scaled by the length of each model column, which gives object-space metres, so repeats per metre match world space. It is taken before skinning and before `vertex()`. `w` is the sign of the model's 3x3 determinant.
+- `pbr.frag` takes the triplanar position as an argument. When the `mapping.x` uniform is 2 (object space), it projects from `v_object.xyz` and blends by the object-space geometric normal. The object-to-world frame is rebuilt per pixel from `dFdx`/`dFdy` of the object and world positions, with columns normalised, the third column flipped by `w`, and the identity fallback when the frame is degenerate. The blended triplanar normal is mapped back to world space with it. Anti-tiling noise uses the same position.
+- `MaterialAsset::triplanar_object` (`.vmat` key `triplanar_object`, omitted when false, inherited and overridable as `MaterialField::TriplanarObject`), `render::Material::triplanar_object` (flag bit 128 in the material signature), the Material Editor's "Object Space" checkbox under Triplanar, and `SurfaceInput::object_position` for surface shaders.
+
+**Alternatives:**
+- Pass the inverse model matrix per draw: exact, but needs three more vec4 instance attributes or a storage buffer on every path, including GLES, for one material option.
+- Transform in the vertex shader and pass a full tangent frame (three vec3 varyings): exact frame without derivatives, at three times the varying cost for every draw.
+- Apply the inverse model rotation on the CPU per material: wrong as soon as one material is shared by several moving objects.
+
+**Evidence:** `victus_gpu_tests -tc="gpu: object-space triplanar*"` (tests/render/gpu_triplanar_object_tests.cpp) and `victus_asset_tests -tc="material object-space triplanar*"`; STATUS.md entry for the commit.
+
+**Consequences:**
+- Textures and normal maps stay on moving, rotating bodies: the measured image difference between a rest pose and a rigidly moved object, camera and sun is 0 in object space.
+- Every PBR draw carries one more vec4 varying. The derivative frame is computed only for object-space materials.
+- The frame is constant per pixel quad, so it is approximate at silhouettes. Object space follows the rest pose, so skinned meshes keep the texture on the bind pose, and vertex-function offsets do not move the projection. Mirrored and skinned cases are not image-tested.

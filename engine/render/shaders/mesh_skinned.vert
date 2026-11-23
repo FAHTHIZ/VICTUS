@@ -78,6 +78,7 @@ layout(location = 2) out vec2 v_uv;
 layout(location = 3) out vec4 v_tangent;
 layout(location = 4) out vec4 v_color;
 layout(location = 5) out vec3 v_lightmap; // not lightmapped (see mesh_lightmap.vert)
+layout(location = 6) out vec4 v_object; // xyz: rest position in object metres, w: handedness (ADR-0246)
 invariant gl_Position;
 void main() {
     uint base = uint(in_normal0.w + 0.5);
@@ -95,4 +96,6 @@ void main() {
     v_color = vec4(mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)), in_color.a);
     gl_Position = frame.view_proj * world;
     v_lightmap = vec3(0.0);
+    v_object = vec4(in_pos * vec3(length(in_model0.xyz), length(in_model1.xyz), length(in_model2.xyz)),
+                    determinant(mat3(in_model0.xyz, in_model1.xyz, in_model2.xyz)) < 0.0 ? -1.0 : 1.0);
 }

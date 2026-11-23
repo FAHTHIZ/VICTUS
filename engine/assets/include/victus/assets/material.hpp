@@ -20,6 +20,7 @@
 //     "responsive": 0..1           // blended only: how much TAA trusts the current frame under it (ADR-0187)
 //     "triplanar": false           // world-space triplanar mapping; uv_scale = repeats per metre (ADR-0197)
 //     "triplanar_sharpness": 4     // blend exponent between the three projections (1 .. 64)
+//     "triplanar_object": false    // project in object space so the texture moves with the object (ADR-0246)
 //     "clearcoat": 0..1            // glossy dielectric layer over the base (ADR-0203); 0 = none
 //     "clearcoat_roughness": 0.03  // the coat's own roughness
 //     "sheen_color": [r, g, b]     // cloth/velvet sheen, linear (ADR-0231); black = none
@@ -62,7 +63,7 @@ enum class MaterialField : std::uint8_t {
     EmissiveStrength, EmissiveTexture, AlphaCutoff, UvScale, UvOffset, Filter, Unlit, DoubleSided, Shader, ShaderParams,
     VertexAlpha, CoverageResponse, Blend, OcclusionStrength, ShaderTextures, Responsive, Triplanar, TriplanarSharpness,
     Clearcoat, ClearcoatRoughness, SheenColor, SheenRoughness, Anisotropy, AnisotropyRotation, SubsurfaceColor,
-    SubsurfaceThickness, AntiTiling, MaxVertexOffset, Count
+    SubsurfaceThickness, AntiTiling, MaxVertexOffset, TriplanarObject, Count
 };
 inline constexpr std::size_t kMaterialFieldCount = static_cast<std::size_t>(MaterialField::Count);
 [[nodiscard]] constexpr std::uint64_t field_bit(MaterialField f) noexcept { return std::uint64_t{1} << static_cast<unsigned>(f); }
@@ -86,6 +87,9 @@ struct MaterialAsset {
     // blended by the normal instead of using mesh uvs; uv_scale then counts repeats per metre.
     bool triplanar{false};
     float triplanar_sharpness{4.0f};
+    // Object-space triplanar (ADR-0246): project along the object's own axes, in metres (its scale
+    // applied), so the texture sticks to moving, rotating and skinned objects. Needs `triplanar`.
+    bool triplanar_object{false};
     // Clear coat (ADR-0203): a glossy dielectric layer over the base with its own roughness
     // (lacquer, car paint, glazed ceramic). 0 = none.
     float clearcoat{0.0f};

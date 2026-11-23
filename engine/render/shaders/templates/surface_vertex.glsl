@@ -119,6 +119,7 @@ layout(location = 2) out vec2 v_uv;
 layout(location = 3) out vec4 v_tangent;
 layout(location = 4) out vec4 v_color;
 layout(location = 5) out vec3 v_lightmap;
+layout(location = 6) out vec4 v_object; // xyz: rest position in object metres, w: handedness (ADR-0246)
 #endif
 
 // What the vertex function reads.
@@ -212,6 +213,8 @@ void main() {
     v_tangent = vec4(normalize(mat3(model) * local_tangent), in_tangent.w);
     v_uv = v.uv;
     v_color = v.color;
+    v_object = vec4(in_pos * vec3(length(in_model0.xyz), length(in_model1.xyz), length(in_model2.xyz)),
+                    determinant(mat3(in_model0.xyz, in_model1.xyz, in_model2.xyz)) < 0.0 ? -1.0 : 1.0);
 #ifdef VX_LIGHTMAP
     v_lightmap = vec3(in_lightmap_uv + vec2(in_normal1.w, in_normal2.w), 1.0);
 #else

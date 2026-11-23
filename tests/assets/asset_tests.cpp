@@ -710,6 +710,25 @@ TEST_CASE("material anti-tiling round trips, clamps, inherits and is omitted at 
     CHECK(apply_instance(parent, child).anti_tiling == doctest::Approx(0.0f)); // overridden
 }
 
+TEST_CASE("material object-space triplanar round trips, inherits and is omitted when off (ADR-0246)") {
+    auto m = MaterialAsset::from_json(*json::parse(R"({"victus_material": 1, "triplanar": true, "triplanar_object": true})"));
+    REQUIRE(m.ok());
+    CHECK(m->triplanar_object);
+    auto back = MaterialAsset::from_json(m->to_json());
+    REQUIRE(back.ok());
+    CHECK(back->triplanar_object);
+    CHECK(MaterialAsset{}.to_json().find("triplanar_object") == nullptr);
+    CHECK_FALSE(MaterialAsset::from_json(*json::parse(R"({"victus_material": 1, "triplanar_object": 3})")).ok());
+    MaterialAsset parent;
+    parent.triplanar_object = true;
+    MaterialAsset child;
+    child.parent = Uuid::generate();
+    child.overrides = 0;
+    CHECK(apply_instance(parent, child).triplanar_object); // inherited
+    child.overrides = field_bit(MaterialField::TriplanarObject);
+    CHECK_FALSE(apply_instance(parent, child).triplanar_object); // overridden
+}
+
 TEST_CASE("material max vertex offset round trips, clamps, inherits and is omitted at its default (ADR-0245)") {
     auto m = MaterialAsset::from_json(*json::parse(R"({"victus_material": 1, "max_vertex_offset": 0.4})"));
     REQUIRE(m.ok());

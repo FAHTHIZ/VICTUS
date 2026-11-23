@@ -78,8 +78,10 @@ struct Material {
     // World-space triplanar mapping (ADR-0197): textures are projected along the world axes and
     // blended by the surface normal instead of using the mesh's uvs, and uv_scale becomes repeats
     // per metre. Suits scaled blocks, rocks and level geometry without good uvs. The projection
-    // is in world space, so a moving object's texture slides over it.
+    // is in world space, so a moving object's texture slides over it, unless triplanar_object
+    // projects along the object's own axes instead (ADR-0246).
     bool triplanar{false};
+    bool triplanar_object{false};
     float triplanar_sharpness{4.0f}; // blend exponent between projections (1 soft .. 64 hard)
     // Clear coat (ADR-0203, KHR_materials_clearcoat): a glossy dielectric layer over the base
     // (lacquer, car paint, glazed ceramic, varnish). 0 = none; it has its own roughness and

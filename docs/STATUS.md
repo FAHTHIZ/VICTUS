@@ -3778,3 +3778,28 @@ Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, Xvfb + lavapipe):
 - `ctest -R perf_budgets`: all budgets met. Frame p95 values were 218, 5.8, 11.2, 11.4, 283, 240 and 85 ms, in the budget file's scene order.
 - clang-tidy on material.cpp, material_panel.cpp, starter_materials.cpp, scene_renderer.cpp and gpu_vertex_motion_tests.cpp: 0 diagnostics. The only message is the GCC-only `-Wshadow=local` flag being unknown to clang.
 - Next task: object-space triplanar mapping for moving objects (Rendering gaps).
+
+## 2026-11-24 — Object-space triplanar mapping (ADR-0246)
+
+Built:
+- Every PBR vertex variant writes `v_object` (rest position scaled to object metres, plus the determinant sign). `pbr.frag` projects triplanar textures from it when the material is in object space. The frame comes from screen derivatives of the object and world positions and maps the triplanar normal back to world space. Anti-tiling noise follows the same position.
+- `MaterialAsset::triplanar_object` (`.vmat` key `triplanar_object`, omitted when false, inherited and overridable), `render::Material::triplanar_object` (in the material signature), the Material Editor's "Object Space" checkbox under Triplanar, and `SurfaceInput::object_position` for surface shaders.
+- Tests:
+  - `gpu: object-space triplanar textures and normal maps move with the object (ADR-0246)`
+  - `material object-space triplanar round trips, inherits and is omitted when off (ADR-0246)`
+
+Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, Xvfb + lavapipe):
+- The GPU case renders a checker-textured cube at rest and after one rigid motion applied to the cube, camera and sun (translation (2.3, 0.37, -1.1) and a 1.1 rad rotation). Mean absolute 8-bit differences over the whole 128x128 frame (the cube covers about a seventh of it):
+  - Unlit: world space 3.84, object space 0.
+  - Lit with a tilted-normal checker normal map: world space 3.42, object space 0.
+  - The normal map changes the lit image by 1.25, which shows it is in play. The thresholds are > 2.5, < 0.75, > 2.0, < 0.75 and > 0.8, set from these first measurements. The first draft's guesses (> 4 and > 3) were too high for a frame mostly made of background.
+  - The saved images `triplanar_object_moved` and `triplanar_object_lit` were inspected: the checker sits on the rotated cube faces with no seams.
+- `victus_gpu_tests` on triplanar, materials, vertex functions, surface shaders and trees: 15 cases passed after the threshold change. `victus_asset_tests -tc="material*"`: 10 cases passed.
+- `tools/shaders/compile_shaders.py --check`: built-in shaders up to date (64).
+- Full `ctest -j2 -E perf_budgets`:
+  - A first run without `VICTUS_REQUIRE_GPU=1` skipped three GPU CLI tests, and `victus_editor_tests` hit the intermittent SIGSEGV again, this time in `studio workspace: every panel reopens from the Window menu...`. This is a third different case. The crash is still unexplained and open.
+  - The rerun with `VICTUS_REQUIRE_GPU=1`: 47/47 passed (100 %).
+- `ctest -R perf_budgets`: all budgets met. Frame p95 values were 217, 5.4, 11.6, 12.6, 276, 254 and 69 ms, in the budget file's scene order.
+- clang-tidy on material.cpp, material_panel.cpp, scene_rendering.cpp and the new test: 0 diagnostics. The only error is clang not knowing the GCC-only `-Wshadow=local` flag.
+- Not verified: mirrored (negative-scale) objects and skinned meshes in object space, and real GPUs.
+- Next task: investigate the intermittent `victus_editor_tests` SIGSEGV, then continue with Rendering gaps (clear coat on area lights).

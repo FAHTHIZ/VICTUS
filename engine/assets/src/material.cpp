@@ -105,6 +105,7 @@ const char* field_key(MaterialField f) noexcept {
     case MaterialField::SubsurfaceThickness: return "subsurface_thickness";
     case MaterialField::AntiTiling: return "anti_tiling";
     case MaterialField::MaxVertexOffset: return "max_vertex_offset";
+    case MaterialField::TriplanarObject: return "triplanar_object";
     default: return "";
     }
 }
@@ -150,6 +151,7 @@ void MaterialAsset::copy_field(const MaterialAsset& src, MaterialField f) {
     case MaterialField::SubsurfaceThickness: subsurface_thickness = src.subsurface_thickness; break;
     case MaterialField::AntiTiling: anti_tiling = src.anti_tiling; break;
     case MaterialField::MaxVertexOffset: max_vertex_offset = src.max_vertex_offset; break;
+    case MaterialField::TriplanarObject: triplanar_object = src.triplanar_object; break;
     default: break;
     }
 }
@@ -213,6 +215,8 @@ json::Value MaterialAsset::to_json() const {
         v.set("triplanar", triplanar); // omitted when off, so older files round-trip
     if (triplanar_sharpness != 4.0f || (is_instance() && overrides_field(MaterialField::TriplanarSharpness)))
         v.set("triplanar_sharpness", num(triplanar_sharpness));
+    if (triplanar_object || (is_instance() && overrides_field(MaterialField::TriplanarObject)))
+        v.set("triplanar_object", triplanar_object); // omitted when off
     if (clearcoat != 0.0f || (is_instance() && overrides_field(MaterialField::Clearcoat)))
         v.set("clearcoat", num(clearcoat)); // omitted when off, so older files round-trip
     if (clearcoat_roughness != 0.03f || (is_instance() && overrides_field(MaterialField::ClearcoatRoughness)))
@@ -265,6 +269,7 @@ Result<MaterialAsset> MaterialAsset::from_json(const json::Value& v) {
                     r.boolean("unlit", m.unlit) && r.boolean("double_sided", m.double_sided) &&
                     r.number("coverage_response", m.coverage_response) && r.number("occlusion_strength", m.occlusion_strength) && r.number("responsive", m.responsive) &&
                     r.boolean("triplanar", m.triplanar) && r.number("triplanar_sharpness", m.triplanar_sharpness) &&
+                    r.boolean("triplanar_object", m.triplanar_object) &&
                     r.number("clearcoat", m.clearcoat) && r.number("clearcoat_roughness", m.clearcoat_roughness) &&
                     r.vec("sheen_color", &m.sheen_color.x, 3, 3) && r.number("sheen_roughness", m.sheen_roughness) &&
                     r.number("anisotropy", m.anisotropy) && r.number("anisotropy_rotation", m.anisotropy_rotation) &&

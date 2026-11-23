@@ -35,6 +35,9 @@ layout(location = 3) in vec4 v_tangent;
 layout(location = 4) in vec4 v_color; // linear rgb, alpha: opacity or coverage mask (material.flags.z)
 // Baked lightmap (ADR-0122): xy atlas uv, z 1 when the mesh is lightmapped (mesh_lightmap.vert), else 0.
 layout(location = 5) in vec3 v_lightmap;
+// Object-space triplanar (ADR-0246): rest position in object metres (the model's scale applied,
+// rotation and translation not) and, in w, the sign of the model's determinant.
+layout(location = 6) in vec4 v_object;
 
 layout(set = 2, binding = 0) uniform sampler2D u_base_color;
 layout(set = 2, binding = 1) uniform sampler2D u_metal_rough;
@@ -181,7 +184,7 @@ layout(set = 3, binding = 1) uniform Material {
     vec4 custom[4];      // surface shader parameters (material "shader_params")
     vec4 blend;          // x: 0 opaque, 1 alpha blended, 2 additive (volumetric fog, ADR-0119); y: ORM occlusion strength (ADR-0139),
                          // z: alpha to coverage, w: LOD cross-fade (ADR-0184; > 0 keeps dither < w, < 0 keeps dither >= -w)
-    vec4 mapping;        // x: 1 = world-space triplanar mapping (ADR-0197), y: blend sharpness
+    vec4 mapping;        // x: 1 = world-space triplanar mapping (ADR-0197), 2 = object space (ADR-0246); y: blend sharpness
     vec4 layers;         // x: clear coat strength (ADR-0203), y: clear coat roughness
     vec4 sheen;          // rgb: sheen colour, linear (ADR-0231, KHR_materials_sheen; 0 = none), a: sheen roughness
     vec4 anisotropy;     // x: anisotropy strength 0..1 (ADR-0232, KHR_materials_anisotropy; 0 = none), y: rotation (radians, from the tangent)
@@ -261,6 +264,7 @@ struct SurfaceInput {
     vec2 uv;             // material-transformed texture coordinates
     vec2 mesh_uv;        // the mesh's own texture coordinates
     vec3 world_position;
+    vec3 object_position; // rest position in object metres (sticks to moving and skinned meshes)
     vec3 view_dir;       // unit vector towards the camera
     vec3 vertex_normal;  // interpolated geometric normal (world space)
     float time;          // seconds
@@ -912,10 +916,12 @@ float local_shadow(LocalLight l, vec3 Ld, float dist, vec3 N) {
 // meshes without good UVs tile evenly at uv_transform.xy repeats per metre. The projected u axis
 // is flipped on faces that look down a negative axis so no face shows a mirrored image, and normal
 // maps are reoriented with the "whiteout" blend (Golus, "Normal Mapping for a Triplanar Shader").
+// Object-space mapping (ADR-0246) projects the object-metre position v_object.xyz instead, with
+// `n` in object space, so the texture moves with the object; triplanar_frame() gives the
+// object-to-world rotation for the normal map.
 struct Triplanar { vec2 uv_x, uv_y, uv_z; vec3 w, s; };
-Triplanar triplanar_setup(vec3 n, float scale) {
+Triplanar triplanar_setup(vec3 p, vec3 n, float scale) {
     Triplanar t;
-    vec3 p = v_world_pos;
     t.s = vec3(n.x < 0.0 ? -1.0 : 1.0, n.y < 0.0 ? -1.0 : 1.0, n.z < 0.0 ? -1.0 : 1.0);
     vec2 sc = material.uv_transform.xy * scale, of = material.uv_transform.zw;
     t.uv_x = vec2(-p.z * t.s.x, -p.y) * sc + of;
@@ -958,12 +964,33 @@ float at_noise(vec2 p) {
     return mix(mix(at_hash(c), at_hash(c + vec2(1, 0)), u.x), mix(at_hash(c + vec2(0, 1)), at_hash(c + vec2(1, 1)), u.x), u.y);
 }
 
+// Object-to-world frame of the pixel (ADR-0246) from screen derivatives of the world and object
+// positions: their tangent-plane steps and crossed normals are related by the frame, which is
+// exact for rigid and scaled meshes (and the local deformation of skinned ones), with no extra
+// per-instance data. Columns are normalised first so far, small triangles stay well conditioned.
+mat3 triplanar_frame() {
+    vec3 ox = dFdx(v_object.xyz), oy = dFdy(v_object.xyz);
+    vec3 wx = dFdx(v_world_pos), wy = dFdy(v_world_pos);
+    float kx = 1.0 / max(length(ox), 1e-12), ky = 1.0 / max(length(oy), 1e-12);
+    ox *= kx; wx *= kx;
+    oy *= ky; wy *= ky;
+    vec3 oz = cross(ox, oy), wz = cross(wx, wy) * v_object.w;
+    float kz = 1.0 / max(length(oz), 1e-12);
+    mat3 o = mat3(ox, oy, oz * kz);
+    if (abs(determinant(o)) < 1e-6) return mat3(1.0); // degenerate (edge-on): world axes
+    return mat3(wx, wy, wz * kz) * inverse(o);
+}
+
 void main() {
     vec2 uv = v_uv * material.uv_transform.xy + material.uv_transform.zw;
     bool triplanar = material.mapping.x > 0.5;
+    bool object_space = material.mapping.x > 1.5;
     vec3 geometric_n = normalize(v_normal);
     if (!gl_FrontFacing) geometric_n = -geometric_n;
-    Triplanar tp = triplanar_setup(geometric_n, 1.0);
+    mat3 to_world = object_space ? triplanar_frame() : mat3(1.0);
+    vec3 tp_pos = object_space ? v_object.xyz : v_world_pos;
+    vec3 tp_n = object_space ? normalize(transpose(to_world) * geometric_n) : geometric_n;
+    Triplanar tp = triplanar_setup(tp_pos, tp_n, 1.0);
     vec4 base = triplanar ? triplanar_sample(u_base_color, tp) : texture(u_base_color, uv, lighting.camera_forward.w);
     float anti_tiling = material.mapping.z;
     if (anti_tiling > 0.0) {
@@ -972,13 +999,14 @@ void main() {
         float far = smoothstep(6.0, 40.0, length(lighting.camera_pos.xyz - v_world_pos)) * 0.5 *
                     clamp(anti_tiling * 2.0 - 1.0, 0.0, 1.0);
         if (far > 0.0) {
-            vec4 big = triplanar ? triplanar_sample(u_base_color, triplanar_setup(geometric_n, 0.23))
+            vec4 big = triplanar ? triplanar_sample(u_base_color, triplanar_setup(tp_pos, tp_n, 0.23))
                                  : texture(u_base_color, uv * 0.23, lighting.camera_forward.w);
             base.rgb = mix(base.rgb, big.rgb, far); // same texture, same mean: only the pattern changes
         }
         // Macro variation: two octaves of world-space noise (2.5 m and 9 m) modulate the albedo,
-        // like the macro-variation maps of Megascans landscape materials.
-        vec3 wp = v_world_pos;
+        // like the macro-variation maps of Megascans landscape materials (object space with
+        // object-space triplanar, so it moves with the object).
+        vec3 wp = tp_pos;
         vec2 mp = vec2(wp.x + wp.y * 0.71, wp.z - wp.y * 0.53);
         float m = 0.6 * at_noise(mp * 0.11) + 0.4 * at_noise(mp * 0.4 + 17.0);
         base.rgb *= mix(1.0, 0.72 + 0.56 * m, min(anti_tiling * 2.0, 1.0));
@@ -998,7 +1026,7 @@ void main() {
     vec3 N = geometric_n;
     if (material.flags.x > 0.5) {
         if (triplanar) {
-            N = triplanar_normal(tp, geometric_n);
+            N = object_space ? normalize(to_world * triplanar_normal(tp, tp_n)) : triplanar_normal(tp, geometric_n);
         } else {
             vec3 T = normalize(v_tangent.xyz - N * dot(N, v_tangent.xyz));
             vec3 B = cross(N, T) * v_tangent.w;
@@ -1014,6 +1042,7 @@ void main() {
     si.uv = uv;
     si.mesh_uv = v_uv;
     si.world_position = v_world_pos;
+    si.object_position = v_object.xyz;
     si.view_dir = V;
     si.vertex_normal = geometric_n;
     si.time = lighting.screen.z;

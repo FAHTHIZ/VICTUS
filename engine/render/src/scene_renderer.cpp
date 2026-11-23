@@ -121,7 +121,7 @@ void pack_material(const Material& m, SceneRenderer::MaterialSignature& sig) noe
         f(m.max_vertex_offset);
     t(m.base_color_texture), t(m.metallic_roughness_texture), t(m.normal_texture), t(m.emissive_texture);
     w[n++] = (m.double_sided ? 1u : 0u) | (m.unlit ? 2u : 0u) | (m.cast_shadows ? 4u : 0u) | (m.nearest_filter ? 8u : 0u) |
-             (m.vertex_alpha_coverage_mask ? 16u : 0u) | (m.shadow_only ? 32u : 0u) | (m.triplanar ? 64u : 0u) |
+             (m.vertex_alpha_coverage_mask ? 16u : 0u) | (m.shadow_only ? 32u : 0u) | (m.triplanar ? 64u : 0u) | (m.triplanar_object ? 128u : 0u) |
              (std::uint32_t{static_cast<std::uint8_t>(m.blend)} << 8) | (static_cast<std::uint32_t>(m.shader_texture_count) << 16);
     w[n++] = m.surface_shader.index;
     w[n++] = m.surface_shader.generation;
@@ -173,7 +173,7 @@ bool same_material(const Material& a, const Material& b) noexcept {
                       [](const Vec4& x, const Vec4& y) { return x.x == y.x && x.y == y.y && x.z == y.z && x.w == y.w; }) &&
            a.vertex_alpha_coverage_mask == b.vertex_alpha_coverage_mask && a.coverage_response == b.coverage_response &&
            a.occlusion_strength == b.occlusion_strength && a.blend == b.blend && a.shadow_only == b.shadow_only &&
-           a.triplanar == b.triplanar && a.triplanar_sharpness == b.triplanar_sharpness && a.clearcoat == b.clearcoat &&
+           a.triplanar == b.triplanar && a.triplanar_object == b.triplanar_object && a.triplanar_sharpness == b.triplanar_sharpness && a.clearcoat == b.clearcoat &&
            a.clearcoat_roughness == b.clearcoat_roughness && a.responsive == b.responsive && a.sheen_color == b.sheen_color &&
            a.sheen_roughness == b.sheen_roughness && a.anisotropy == b.anisotropy && a.anisotropy_rotation == b.anisotropy_rotation &&
            a.subsurface_color == b.subsurface_color && a.subsurface_thickness == b.subsurface_thickness && a.anti_tiling == b.anti_tiling &&
@@ -231,7 +231,7 @@ struct MaterialUniforms {
     Vec4 uv_transform; // xy scale, zw offset
     Vec4 custom[4];    // surface shader parameters
     Vec4 blend;        // x 0 opaque, 1 alpha, 2 additive (ADR-0119)
-    Vec4 mapping;      // x triplanar (ADR-0197), y blend sharpness
+    Vec4 mapping;      // x triplanar: 1 world (ADR-0197), 2 object space (ADR-0246); y blend sharpness
     Vec4 layers;       // x clear coat, y clear coat roughness (ADR-0203)
     Vec4 sheen;        // rgb sheen colour, a sheen roughness (ADR-0231)
     Vec4 anisotropy;   // x strength, y rotation in radians (ADR-0232)
@@ -4989,7 +4989,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 // blend.z: alpha to coverage (ADR-0152) - the cut-out becomes a coverage ramp.
                 mat.blend = {static_cast<float>(m.blend), std::clamp(m.occlusion_strength, 0.0f, 1.0f), a2c_of(m) ? 1.0f : 0.0f,
                              d->lod_fade};
-                mat.mapping = {m.triplanar ? 1.0f : 0.0f, std::clamp(m.triplanar_sharpness, 1.0f, 64.0f),
+                mat.mapping = {m.triplanar ? (m.triplanar_object ? 2.0f : 1.0f) : 0.0f, std::clamp(m.triplanar_sharpness, 1.0f, 64.0f),
                                std::clamp(finite_or(m.anti_tiling, 0.0f), 0.0f, 1.0f), 0.0f};
                 mat.layers = {std::clamp(m.clearcoat, 0.0f, 1.0f), std::clamp(m.clearcoat_roughness, 0.0f, 1.0f), 0.0f, 0.0f};
                 mat.sheen = {std::clamp(m.sheen_color.x, 0.0f, 1.0f), std::clamp(m.sheen_color.y, 0.0f, 1.0f),
