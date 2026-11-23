@@ -3917,3 +3917,35 @@ Verified:
   - Crash sites that differ each time suggest heap corruption. lavapipe keeps GPU memory in the process heap, so a GPU-side out-of-bounds write is one candidate.
   - GPU-assisted validation (`VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT`) on `studio feet*` reported no out-of-bounds access in a passing run. The cause is still open.
 - Next task: keep narrowing the editor SIGSEGV (GPU-assisted validation over the whole editor binary; an AddressSanitizer build), then SSR on Medium/GLES.
+
+## 2026-11-24 — Editor test crash: headless submits bounded, tests split (ADR-0249)
+
+This entry explains the intermittent `victus_editor_tests` SIGSEGV that the two previous entries recorded as unexplained, and fixes it.
+
+Built:
+- `CommandBuffer::submit()` on a device with no attached window takes a fence and keeps at most `rhi::kMaxSubmitsInFlight` (3) submits in flight, waiting for the oldest before a fourth proceeds. `wait_idle()` and `~Device` release the remaining fences. Windowed submits are unchanged (the swapchain already paces them).
+- `DeviceStats` gains `submits_in_flight` and `submit_throttle_waits`.
+- `victus_add_test(... NO_TEST)` builds a test executable without registering it. The editor test binary runs as three CTest tests filtered by source file: `victus_editor_tests` (34 cases), `victus_studio_tests` (41) and `victus_editor_tools_tests` (9), all labelled `editor;gpu`.
+- `victus_perf_budgets` is `RUN_SERIAL` (frame-time ceilings are measured on the CPU).
+- New case `rhi submit: headless submits are bounded to kMaxSubmitsInFlight (ADR-0249)` in `victus_gpu_tests`.
+
+Diagnosis:
+- Core dumps (`core_pattern` `/tmp/core.%e.%p`, gdb) caught three crashes:
+  - lavapipe's queue thread executing an unmapped JIT address.
+  - `memset(-1, 0, 64)` inside lavapipe's descriptor-set allocation (-1 is `MAP_FAILED`), reached from SDL_GPU's `VULKAN_DispatchCompute`.
+  - The same allocation path from `VULKAN_DrawIndexedPrimitivesIndirect` in `SceneRenderer::render`, in the 34-case group after the split.
+- The cores held 65,532 and 65,116 mappings against `vm.max_map_count` 65,530. Of the first core's mappings, 64,787 were 4 KB deleted memfd pages, one per lavapipe descriptor set.
+- The engine releases its resources: the RHI live counts after every Harness teardown stayed flat (textures 6–7, buffers 0–2, pipelines 0–1, shaders 41–42), and an empty Studio opened and closed five times stays at 301 mappings.
+- SDL_GPU 3.4.20 (`SDL_gpu_vulkan.c`) gives each live command buffer a `DescriptorSetCache`. The cache allocates sets 128 at a time per layout, keeps them after the command buffer completes, and is reused at that size. Headless `submit()` never waited, so the number of live heavy command buffers, and therefore of full-size caches, depended on how far lavapipe's queue thread fell behind the CPU.
+- Splitting the tests alone was not enough: in the second of two full `ctest -j2` runs (the first passed 49/49), the 34-case group crashed at 65,116 mappings.
+
+Verified (Release, lavapipe, Xvfb):
+- Peak mappings of the 34-case `-sf=*editor_tests.cpp` group, run alone: at least 57,550 before the bound (its own probe, 30 of 34 cases in), 21,136 after (sampled from `/proc/<pid>/maps` every second).
+- The whole editor binary in one process (84 cases) after the bound: 84/84 passed, 6,461 assertions, peak 23,094 mappings.
+- `victus_gpu_tests -tc="rhi submit*"`: passed (23 assertions). With `VICTUS_GPU_DRIVER=gles` it returns early (GLES has no fence queue).
+- `clang-tidy` on rhi_sdl.cpp: only the expected unknown `-Wshadow=local` flag.
+- Full `ctest -j2` with `VICTUS_REQUIRE_GPU=1` before `RUN_SERIAL`, run twice: every functional test passed both times, including the three editor groups (34, 41 and 9 cases). `victus_perf_budgets` failed both times because it ran next to an editor group: frame p95 of 613/482/454 ms and 440/495/440 ms for sample-arena, template-3d and template-multiplayer, against ceilings of 400, 400 and 350.
+- `ctest -R perf_budgets` alone: p95 242, 302 and 300 ms, all budgets met. `victus run` attaches a window, so the submit bound does not apply to it.
+- Full `ctest -j2` with `RUN_SERIAL`: 100% of 50 passed in 1,043 s (victus_editor_tests 525 s, victus_studio_tests 407 s, victus_editor_tools_tests 14 s, victus_perf_budgets 112 s with p95 228, 5.8–15.5, 301, 259 and 80 ms). The only core files came from the deliberate `crash::trigger` test.
+- Next task: Rendering gaps — SSR on Medium (without TAA) and GLES.
+

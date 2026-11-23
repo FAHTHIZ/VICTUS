@@ -2835,3 +2835,31 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 - Glossy highlights from bulbs and panels are larger and brighter than before. On the 0.06-roughness metal floor test, the highlight grew from 208 to 927 pixels for a 0.5 m bulb and from 215 to 1388 for a 1.5 m panel, because the old values were capped. Scenes that were lit for the old look may need less light intensity on glossy floors.
 - One more representative point per coated pixel per rectangle light. Sheen and coat are skipped when off.
 - Sheen from the centre direction is approximate for large, close panels. Subsurface scattering and anisotropy are still not shaded by area lights.
+
+### ADR-0249: Bounded headless submits in flight; editor tests run as three processes
+
+**Status:** Accepted (2026-11-24).
+
+**Context:** `victus_editor_tests` crashed intermittently under Xvfb and lavapipe since at least ADR-0243, each time in a different test case.
+- Core dumps showed lavapipe calling `memset` on a pointer of -1 (a failed `mmap`) while allocating descriptor sets, and in other runs executing an unmapped JIT address.
+- The cores held 65,116 to 65,532 mappings against Linux's default `vm.max_map_count` of 65,530. Almost all of them were single 4 KB pages of deleted memory files: lavapipe backs every descriptor set with its own mapped page.
+- Logging `/proc/self/maps` and the RHI live-resource counters at every editor teardown showed that the engine releases its textures, buffers and pipelines. An empty Studio opened and closed five times stays at 301 mappings.
+- SDL_GPU 3.4 gives each live command buffer a descriptor-set cache. The cache grows in pools of 128 sets per layout up to the heaviest command buffer it has recorded, then returns to a free list without being trimmed.
+- `CommandBuffer::submit()` never waited. With a window, the swapchain paces frames, but headless rendering (tests, offscreen captures) let the CPU queue any number of heavy command buffers. Each one took a cache, so the number of full-size caches depended on how far lavapipe's queue thread fell behind. That is why the crash moved between cases and was more likely under `ctest -j2`.
+
+**Decision:**
+- On a device with no attached window, `submit()` takes a fence and keeps at most three submits in flight, waiting for the oldest before a fourth proceeds. `wait_idle()` and device destruction release the remaining fences. Windowed submits are unchanged.
+- `victus_add_test` gains `NO_TEST`. The editor test binary is registered as three CTest tests, filtered by source file: `victus_editor_tests` (editor_tests.cpp, 34 cases), `victus_studio_tests` (studio_ux_tests.cpp, 41 cases) and `victus_editor_tools_tests` (gizmo and asset store, 9 cases). The two long groups run in parallel, and each starts from a fresh device.
+- `victus_perf_budgets` is `RUN_SERIAL`. After the split, `ctest -j2` scheduled it next to an editor group, and its CPU frame-time ceilings failed only because of that.
+
+**Alternatives:**
+- Only splitting the tests: tried first. One split group still crashed at 65,116 mappings on the second full run, because the count depends on timing, not on how many cases share a process.
+- Raising `vm.max_map_count` in CI: needs root and hides the limit.
+- Patching SDL_GPU to trim descriptor pools: the right upstream change, but it means carrying a patch on a fetched dependency (and does nothing for `VICTUS_USE_SYSTEM_SDL`).
+- Applying the bound to windowed devices as well: SDL already limits swapchain frames in flight, and a submit-count bound could stall games that submit several command buffers per frame.
+
+**Evidence:** STATUS.md entry for the commit (core-dump analysis, peak mappings before and after, full ctest runs).
+
+**Consequences:**
+- Headless frames on a CPU far ahead of the GPU now wait instead of piling up. This bounds memory as well as descriptor caches.
+- The underlying SDL_GPU behaviour remains. A window-attached process on lavapipe that records very heavy frames still keeps its caches at their high-water mark. KNOWN_LIMITATIONS records the `sysctl vm.max_map_count` workaround. Hardware Vulkan drivers do not map a page per descriptor set.

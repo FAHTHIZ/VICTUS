@@ -62,7 +62,7 @@ The owner's target: images that read as photoreal on hardware as weak as entry-l
 ### 3. Reliability and production
 
 - [~] **Untrusted-input robustness.** Mutation tests cover 30 formats. Remaining: coverage-guided fuzzing in a nightly lane for the highest-risk parsers (glTF, `.vpak`, network packets).
-- [~] **Reliability and recovery.** Done: durable verified writes with generations (ADR-0082), format migrators (ADR-0100), editor safe mode (ADR-0101). Remaining: save-game and cooked-asset migrations, an editor UI for restoring generations, GPU device recreation if SDL_GPU can support it.
+- [~] **Reliability and recovery.** Done: durable verified writes with generations (ADR-0082), format migrators (ADR-0100), editor safe mode (ADR-0101), bounded headless submits in flight (ADR-0249). Remaining: save-game and cooked-asset migrations, an editor UI for restoring generations, GPU device recreation if SDL_GPU can support it.
 - [~] **Packaging.** Done: compressed (zstd) and signed (Ed25519) `.vpak` v2 archives with BLAKE2b digests (ADR-0154). Remaining: cross-export, OS code signing, installers and patches.
 - [ ] **Collaboration.** Source-control-friendly scene diffs and merges, conflict handling.
 - [ ] **Modding.** Sandboxed, permissioned plugins and signed mod packages; plugin hot reload.

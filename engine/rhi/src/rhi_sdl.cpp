@@ -15,6 +15,7 @@
 #include <array>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <format>
 
 namespace victus::rhi {
@@ -274,6 +275,15 @@ struct Device::Impl {
     SDL_GPUShaderFormat formats{0};
     std::vector<SDL_Window*> windows;
     std::unique_ptr<GlesBackend> gl; // set when the device runs on OpenGL ES (ADR-0144)
+    // Fences of recent asynchronous submits, oldest first (ADR-0249). Headless rendering has no
+    // swapchain to pace it, so without a bound the CPU can queue any number of command buffers,
+    // and SDL_GPU gives each live command buffer its own descriptor-set cache that grows to the
+    // heaviest frame it records and is never trimmed.
+    std::deque<SDL_GPUFence*> in_flight;
+    void release_in_flight(SDL_GPUDevice* dev) {
+        for (SDL_GPUFence* f : in_flight) SDL_ReleaseGPUFence(dev, f);
+        in_flight.clear();
+    }
 };
 
 namespace {
@@ -429,6 +439,7 @@ Device::~Device() {
     if (!device_) return;
     auto* dev = static_cast<SDL_GPUDevice*>(device_);
     SDL_WaitForGPUIdle(dev);
+    impl_->release_in_flight(dev);
     for (auto& e : impl_->pipelines.entries)
         if (e.alive) SDL_ReleaseGPUGraphicsPipeline(dev, e.value.pipe);
     for (auto& e : impl_->compute_pipelines.entries)
@@ -825,6 +836,8 @@ CommandBuffer Device::begin_commands() {
 void Device::wait_idle() {
     if (auto* gl = impl_->gl.get()) return gl->wait_idle();
     SDL_WaitForGPUIdle(static_cast<SDL_GPUDevice*>(device_));
+    impl_->release_in_flight(static_cast<SDL_GPUDevice*>(device_));
+    stats_.submits_in_flight = 0;
 }
 
 Result<std::vector<std::uint8_t>> Device::read_texture(TextureHandle h) {
@@ -1120,19 +1133,31 @@ void CommandBuffer::submit() {
         device_->stats_.frames_submitted++;
         return;
     }
-    if (device_->injected(GpuFailure::Submit)) {
-        // The work still runs (a cancelled buffer cannot hold a swapchain image); only the
-        // outcome is reported as a driver failure.
-        (void)SDL_SubmitGPUCommandBuffer(static_cast<SDL_GPUCommandBuffer*>(cmd_));
-        device_->record_failure(GpuFailure::Submit, "injected failure");
-    } else if (!SDL_SubmitGPUCommandBuffer(static_cast<SDL_GPUCommandBuffer*>(cmd_))) {
-        device_->record_failure(GpuFailure::Submit, SDL_GetError());
-    } else {
-        device_->record_success(GpuFailure::Submit);
-    }
+    // The work still runs on an injected failure (a cancelled buffer cannot hold a swapchain
+    // image); only the outcome is reported as a driver failure.
+    // Windowed devices are already paced by the swapchain; only headless submits take a fence.
+    auto* dev = static_cast<SDL_GPUDevice*>(device_->device_);
+    auto& impl = *device_->impl_;
+    auto* cb = static_cast<SDL_GPUCommandBuffer*>(cmd_);
+    const bool paced = impl.windows.empty();
+    SDL_GPUFence* fence = paced ? SDL_SubmitGPUCommandBufferAndAcquireFence(cb) : nullptr;
+    const bool submitted = paced ? fence != nullptr : SDL_SubmitGPUCommandBuffer(cb);
+    if (device_->injected(GpuFailure::Submit)) device_->record_failure(GpuFailure::Submit, "injected failure");
+    else if (!submitted) device_->record_failure(GpuFailure::Submit, SDL_GetError());
+    else device_->record_success(GpuFailure::Submit);
     cmd_ = nullptr;
     device_->stats_.frames_submitted++;
-    auto& impl = *device_->impl_;
+    if (fence) impl.in_flight.push_back(fence);
+    // Bound the queue (ADR-0249): wait for the oldest submit once more than kMaxSubmitsInFlight
+    // are outstanding. Waiting lets SDL_GPU recycle that command buffer and its descriptor cache.
+    while (impl.in_flight.size() > std::size_t{kMaxSubmitsInFlight}) {
+        SDL_GPUFence* oldest = impl.in_flight.front();
+        impl.in_flight.pop_front();
+        if (!SDL_WaitForGPUFences(dev, true, &oldest, 1)) device_->record_failure(GpuFailure::Submit, SDL_GetError());
+        SDL_ReleaseGPUFence(dev, oldest);
+        device_->stats_.submit_throttle_waits++;
+    }
+    device_->stats_.submits_in_flight = static_cast<std::uint32_t>(impl.in_flight.size());
     for (auto h : impl.transient) {
         TextureEntry e;
         impl.textures.remove(h, e);

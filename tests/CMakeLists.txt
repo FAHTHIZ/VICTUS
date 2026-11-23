@@ -208,8 +208,16 @@ victus_add_test(victus_editor_tests
         editor/studio_ux_tests.cpp
         editor/asset_store_tests.cpp
     DEPS VICTUS::EditorCore VICTUS::Platform victus_stb
-    LABELS "editor;gpu")
+    NO_TEST)
 target_compile_definitions(victus_editor_tests PRIVATE VICTUS_TEST_OUTPUT_DIR="${CMAKE_BINARY_DIR}/test_output")
+# One process per source-file group, so the two long groups run in parallel under ctest -j2 and each
+# starts from a fresh device. Before the RHI bounded headless submits in flight (ADR-0249), one
+# process running every editor case reached Linux's default vm.max_map_count on lavapipe and
+# crashed inside the driver; the split also keeps a margin below that limit.
+add_test(NAME victus_editor_tests COMMAND victus_editor_tests "-sf=*editor_tests.cpp")
+add_test(NAME victus_studio_tests COMMAND victus_editor_tests "-sf=*studio_ux_tests.cpp")
+add_test(NAME victus_editor_tools_tests COMMAND victus_editor_tests "-sf=*gizmo_tests.cpp,*asset_store_tests.cpp")
+set_tests_properties(victus_editor_tests victus_studio_tests victus_editor_tools_tests PROPERTIES LABELS "editor;gpu")
 endif()
 
 if(VICTUS_WITH_GRAPHICS AND VICTUS_BUILD_TOOLS)
@@ -343,8 +351,10 @@ add_test(NAME victus_perf_budgets
         -DBUDGETS=${CMAKE_CURRENT_SOURCE_DIR}/perf/budgets.json
         -DWORK=${CMAKE_BINARY_DIR}/test_output/perf_budgets
         -P ${CMAKE_CURRENT_SOURCE_DIR}/perf/perf_budgets.cmake)
+# RUN_SERIAL: frame-time ceilings are measured on the CPU (lavapipe renders there), so the gate must
+# not share the machine with other tests under ctest -j (ADR-0249).
 set_tests_properties(victus_perf_budgets PROPERTIES LABELS "perf;gpu" SKIP_REGULAR_EXPRESSION "VICTUS_PERF_SKIPPED"
-    TIMEOUT 900)
+    TIMEOUT 900 RUN_SERIAL TRUE)
 endif()
 
 victus_add_test(victus_physics_tests

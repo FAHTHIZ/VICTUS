@@ -259,7 +259,12 @@ struct DeviceStats {
     std::uint64_t draw_calls{0}, uploads{0}, upload_bytes{0};
     std::uint64_t dispatches{0}, indirect_draws{0};
     std::uint32_t live_compute_pipelines{0};
+    // Headless submits not yet known to be complete, and how often submit() waited because more
+    // than kMaxSubmitsInFlight were queued (ADR-0249). Always 0 with a window or on OpenGL ES.
+    std::uint32_t submits_in_flight{0};
+    std::uint64_t submit_throttle_waits{0};
 };
+inline constexpr std::uint32_t kMaxSubmitsInFlight = 3;
 
 // GPU failure tracking. SDL_GPU 3.4 has no device-lost notification, so the device counts
 // failed command-buffer acquisitions, swapchain acquisitions and submissions. A run of

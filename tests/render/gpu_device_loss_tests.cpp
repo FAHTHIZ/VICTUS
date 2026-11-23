@@ -3,6 +3,7 @@
 // own device so the shared test device is never marked lost.
 #include "gpu_fixture.hpp"
 
+#include <algorithm>
 #include <string>
 
 using namespace victus;
@@ -66,4 +67,19 @@ TEST_CASE("rhi device loss: failed command buffer acquisition is safe to use and
     CHECK(dev->health().last_failure == GpuFailure::CommandBuffer);
     CHECK(dev->lost_reason().find("command buffer acquisition") != std::string::npos);
     dev->inject_failure(GpuFailure::None);
+}
+
+TEST_CASE("rhi submit: headless submits are bounded to kMaxSubmitsInFlight (ADR-0249)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto dev = fresh_device();
+    if (dev->capabilities().driver_name.starts_with("gles")) return; // GLES has no fence queue
+    const std::uint64_t waits0 = dev->stats().submit_throttle_waits;
+    for (std::uint32_t i = 0; i < 20; ++i) {
+        dev->begin_commands().submit();
+        CHECK(dev->stats().submits_in_flight == std::min(i + 1, rhi::kMaxSubmitsInFlight));
+    }
+    // Fences leave the queue only through the bound, so every submit past the third waited once.
+    CHECK(dev->stats().submit_throttle_waits - waits0 == 20 - rhi::kMaxSubmitsInFlight);
+    dev->wait_idle();
+    CHECK(dev->stats().submits_in_flight == 0);
 }
