@@ -4122,4 +4122,22 @@ Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, lavapipe, `SDL_VIDEO_DRIV
 - `victus_gpu_tests -tc="gpu: MaterialOverrides*,gpu: material*"`: 107/107 assertions. With the emissive reset removed, the new check fails (`dark` = 0), so it catches a leak.
 - Full `ctest -j2 --output-on-failure`: 50/50 passed in 1,029 s.
 - Not verified: the 1 ms accept target holds in every run (it does in some, not in others), physical hardware.
+- Commit: f6e124a.
 - Next task: cheaper retained-record checks in `submit_static`, then parallel batching.
+
+## 2026-11-24 — Replicated gameplay components (ADR-0258)
+
+Built:
+- `ServerOptions::replicated_components` (default `Attributes`, `Inventory`, `Tags`) and `component_rate` (20 Hz): the server sends a component's whole serialized state on a new reliable `kComponents` message when its replication key changes, null when it is removed, and every tracked entity's state on welcome and rejoin. The Attributes key leaves out effect timers.
+- `ClientOptions::replicated_components`: the client's allow-list.
+- `gameplay::replication_key` and `gameplay::apply_replicated`: mirrored Attributes keep the client's previous values, so `update_attributes` emits `attribute_changed` / `attribute_depleted` there. Mirrored effects only count down; the server expires them. Inventory updates emit `inventory_changed` {item, delta, count}.
+- `ReplicationInfo::component_updates` / `component_bytes`.
+- Tests (`tests/net/net_tests.cpp`): health, an item and a tag set on the server reach the client; damage gives one `attribute_changed`; half a second of effect timers sends nothing; a late joiner gets the current state; item removal sends `inventory_changed` with delta -2; tag removal propagates; server-side expiry reaches the client. A second test covers both allow-lists.
+
+Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, lavapipe, `SDL_VIDEO_DRIVER=offscreen VICTUS_REQUIRE_GPU=1`):
+- `victus_net_tests -tc="*ADR-0258*"`: 2/2 cases, 34/34 assertions. With the timer stripping removed from `replication_key`, the no-resend check fails (16 updates against 6), so it catches timer churn.
+- `victus_net_tests`: 28/28 cases, 1,076 assertions.
+- clang-tidy on `session.cpp` and `framework.cpp`: clean. `check_docs.py`: consistent.
+- Full `ctest -j2 --output-on-failure`: 50/50 passed in 1,028 s.
+- Not verified: bandwidth with large inventories (each change resends the whole component), real UDP links.
+- Next task: game session and level lifecycle (networked level travel).

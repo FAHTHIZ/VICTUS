@@ -10,6 +10,7 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 
 ### Added
 
+- Replicated gameplay components (ADR-0258): the server mirrors Attributes, Inventory and Tags (configurable) to clients when they change and on join. Clients get the same `attribute_changed` and `inventory_changed` events as the server, and effect timers do not cause resends. ([evidence](docs/STATUS.md#2026-11-24--replicated-gameplay-components-adr-0258))
 - Tilemap camera culling (ADR-0256): tilemaps only emit cells inside the camera view (padded by one cell), using direct lookups for small views and a range test for zoomed-out views. ([evidence](docs/STATUS.md#2026-11-24--tilemap-camera-culling-adr-0256))
 - 2D normal maps and shadows (ADR-0255): lit sprites can take a normal map that 2D lights shade by angle and `height`, and a `ShadowCaster2D` component (an outline, or the sprite's rectangle) blocks 2D lights that have Shadows on. ([evidence](docs/STATUS.md#2026-11-24--2d-normal-maps-and-shadow-casters-adr-0255))
 - Nova closer to the sheet's close-ups (ADR-0254): her pearl plates break up into the black hardware at their edges, the knees are black and mechanical, the corset is tailored, the boots carry black panels, and her bob is tucked behind the ears. ([evidence](docs/STATUS.md#2026-11-24--nova-sheet-close-up-pass-adr-0254))

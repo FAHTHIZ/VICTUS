@@ -204,6 +204,8 @@ struct ReplicationInfo {
     std::uint64_t bytes{0};        // snapshot bytes of those entries
     std::uint64_t var_updates{0};  // reliable network-variable updates sent (all clients) / received
     std::uint64_t var_bytes{0};    // bytes of those updates
+    std::uint64_t component_updates{0}; // replicated component states sent / received (ADR-0258)
+    std::uint64_t component_bytes{0};   // bytes of those messages
     double last_update{-1};        // session time of the newest snapshot entry (-1 = never)
     std::uint32_t relevant_clients{0}; // server: clients whose latest snapshot considered it relevant
     std::uint64_t deferred{0};     // server: times the snapshot budget left it out
@@ -321,6 +323,11 @@ struct ServerOptions {
     // seconds and get its character back; meanwhile the character stays in the world with no
     // input. Clients that leave on purpose or are kicked are removed at once. 0 = off.
     float reconnect_grace{30.0f};
+    // Registered components (SerializerRegistry names) whose state is mirrored to clients
+    // (ADR-0258): sent in full on join and again whenever it changes, checked `component_rate`
+    // times per second, reliable. Effect timers alone do not count as a change.
+    std::vector<std::string> replicated_components{"Attributes", "Inventory", "Tags"};
+    float component_rate{20.0f};
 };
 
 class NetServer final : public NetContext {
@@ -372,6 +379,8 @@ struct ClientOptions {
     // character) for this many seconds before failing. 0 = fail immediately.
     double reconnect_window{20.0};
     double reconnect_interval{1.0};   // seconds between rejoin attempts
+    // Components the client accepts from the server (ADR-0258); others are ignored.
+    std::vector<std::string> replicated_components{"Attributes", "Inventory", "Tags"};
 };
 
 class NetClient final : public NetContext {

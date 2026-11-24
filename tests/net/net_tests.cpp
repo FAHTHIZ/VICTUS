@@ -9,6 +9,7 @@
 #include "victus/net/wire.hpp"
 
 #include "victus/core/fs.hpp"
+#include "victus/gameplay/framework.hpp"
 #include "victus/gameplay/gameplay.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/script/script.hpp"
@@ -1585,4 +1586,105 @@ TEST_CASE("session fuzz: clients survive corrupted server snapshots") {
     CHECK(mutated >= target);
     CHECK(clean.connected());
     MESSAGE("clients: " << mutated << " corrupted packets, " << dropped << " victims disconnected");
+}
+
+TEST_CASE("session: attributes, inventories and tags replicate to clients (ADR-0258)") {
+    Session s;
+    NetClient& a = s.add_client("a");
+    s.step(30);
+    REQUIRE(a.connected());
+    Scene& srv = s.server_peer.scene;
+    Peer& p = *s.peers[0];
+    const Entity crate = s.server_peer.find("Crate 0");
+    const Entity mirror = p.find("Crate 0");
+    REQUIRE(crate != scene::kNullEntity);
+    REQUIRE(mirror != scene::kNullEntity);
+
+    std::vector<std::string> client_events;
+    std::vector<double> deltas;
+    gameplay::listen(p.scene, "", [&](Scene&, const gameplay::GameplayEvent& ev) {
+        client_events.push_back(ev.name);
+        if (ev.name == "inventory_changed") deltas.push_back(ev.payload.find("delta")->as_number());
+    });
+
+    gameplay::set_attribute_base(srv, crate, "health", 100);
+    gameplay::add_item(srv, crate, "coin", 5);
+    gameplay::add_tag(srv, crate, "Loot");
+    s.step(10);
+    CHECK(gameplay::attribute(p.scene, mirror, "health").value_or(-1) == doctest::Approx(100));
+    CHECK(gameplay::item_count(p.scene, mirror, "coin") == 5);
+    CHECK(gameplay::has_tag(p.scene, mirror, "Loot"));
+    REQUIRE(p.scene.world().get<gameplay::AttributesComponent>(mirror));
+    CHECK(p.scene.world().get<gameplay::AttributesComponent>(mirror)->mirrored);
+    CHECK(deltas == std::vector<double>{5});
+
+    // Damage reaches the client as attribute_changed; a timed effect's ticking does not resend.
+    client_events.clear();
+    gameplay::modify_attribute(srv, crate, "health", -30);
+    gameplay::EffectSpec slow;
+    slow.name = "Slowed";
+    slow.duration = 5;
+    slow.grant_tag = "Status.Slowed";
+    gameplay::apply_effect(srv, crate, slow);
+    s.step(10);
+    CHECK(gameplay::attribute(p.scene, mirror, "health").value_or(-1) == doctest::Approx(70));
+    CHECK(std::count(client_events.begin(), client_events.end(), "attribute_changed") == 1);
+    REQUIRE(gameplay::find_effect(p.scene, mirror, "Slowed"));
+    const auto quiet = s.server->replication();
+    std::uint64_t before = 0;
+    for (const auto& r : quiet)
+        if (r.entity == crate) before = r.component_updates;
+    CHECK(before > 0);
+    s.step(30); // half a second of effect timers only
+    for (const auto& r : s.server->replication())
+        if (r.entity == crate) CHECK(r.component_updates == before);
+    const float left = gameplay::find_effect(p.scene, mirror, "Slowed")->remaining;
+    CHECK(left < 4.7f); // the client counts the timer down itself
+    CHECK(left > 3.5f);
+
+    // A late joiner gets the current state; a server-side removal propagates.
+    NetClient& late = s.add_client("late");
+    s.step(40);
+    REQUIRE(late.connected());
+    Peer& q = *s.peers[1];
+    const Entity late_mirror = q.find("Crate 0");
+    CHECK(gameplay::attribute(q.scene, late_mirror, "health").value_or(-1) == doctest::Approx(70));
+    CHECK(gameplay::item_count(q.scene, late_mirror, "coin") == 5);
+    deltas.clear();
+    gameplay::remove_item(srv, crate, "coin", 2);
+    srv.world().remove<gameplay::TagsComponent>(crate);
+    s.step(10);
+    CHECK(gameplay::item_count(p.scene, mirror, "coin") == 3);
+    CHECK(deltas == std::vector<double>{-2});
+    CHECK_FALSE(gameplay::has_tag(p.scene, mirror, "Loot"));
+    CHECK_FALSE(gameplay::has_tag(q.scene, late_mirror, "Loot"));
+
+    // The server's expiry of the effect reaches clients.
+    s.step(300);
+    CHECK_FALSE(gameplay::find_effect(p.scene, mirror, "Slowed"));
+    CHECK_FALSE(gameplay::has_tag(p.scene, mirror, "Status.Slowed"));
+}
+
+TEST_CASE("session: components outside the allow-lists are not replicated (ADR-0258)") {
+    ServerOptions so;
+    so.replicated_components = {"Inventory", "Attributes"};
+    Session s(so);
+    s.peers.push_back(std::make_unique<Peer>(0));
+    auto o = client_options(7777, "picky");
+    o.replicated_components = {"Inventory"};
+    s.clients.push_back(std::make_unique<NetClient>(s.network.endpoint(), o));
+    s.clients.back()->install(s.peers.back()->sim);
+    s.step(30);
+    REQUIRE(s.clients.back()->connected());
+    Scene& srv = s.server_peer.scene;
+    Peer& p = *s.peers[0];
+    const Entity crate = s.server_peer.find("Crate 1");
+    const Entity mirror = p.find("Crate 1");
+    gameplay::add_item(srv, crate, "gem", 2);
+    gameplay::set_attribute_base(srv, crate, "health", 10);
+    gameplay::add_tag(srv, crate, "Loot");
+    s.step(10);
+    CHECK(gameplay::item_count(p.scene, mirror, "gem") == 2);
+    CHECK_FALSE(gameplay::has_attribute(p.scene, mirror, "health")); // client refused it
+    CHECK_FALSE(gameplay::has_tag(p.scene, mirror, "Loot"));         // server never sent it
 }

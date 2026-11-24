@@ -3047,6 +3047,24 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 - The one-cell pad covers rotated tiles and filtering at the edges. Tiles larger than their cell are not supported by the pad.
 - Culling assumes the map lies in the batch's z = 0 plane, as all 2D tilemaps do.
 
+### ADR-0258: Replicated gameplay components
+
+**Status:** Accepted (2026-11-24).
+
+**Context:** Gameplay framework gaps (ROADMAP): attributes, effects, inventories and tags (ADR-0122) lived only on the machine that changed them. A networked game had to copy health or item counts into script network variables by hand. Clients never saw server-side damage, pickups or status effects in their own Attributes and Inventory components, so HUDs and `on_event` handlers built on those components did not work in multiplayer.
+
+**Decision:**
+- `ServerOptions::replicated_components` names registered components (SerializerRegistry names, default `Attributes`, `Inventory`, `Tags`) whose state the server mirrors to every client. The server checks them `component_rate` times per second (default 20). A component is sent again when its replication key changes. The key is the serialized state, minus effect timers (`remaining`, `next_tick`) for Attributes, so a ticking buff costs nothing.
+- New reliable message `kComponents` (19): net id, count, then component name and JSON state per entry. A null state removes the component. Welcome and rejoin send the full state of every tracked entity after its spawn and variables, so late joiners start current. States over 64 KB are skipped with a warning.
+- `ClientOptions::replicated_components` is the client's allow-list. Names outside it are ignored.
+- `gameplay::apply_replicated` loads the state through the component's serializer. For Attributes, it keeps the client's previous values and marks the component `mirrored`, so the next `update_attributes` refresh emits `attribute_changed` and `attribute_depleted` as on the server. Mirrored effects only count their timers down; periodic application and expiry stay with the server. For Inventory, it emits `inventory_changed` {item, delta, count} for each changed item at once.
+- `ReplicationInfo` gains `component_updates` and `component_bytes`.
+
+**Consequences:**
+- Server-side damage, effects, pickups and tags reach clients with the same events scripts already handle, with no extra code.
+- Each change resends the whole component. That is cheap for typical attribute sets and inventories (hundreds of bytes), but large inventories changing every tick would cost bandwidth. A field-level delta is the next step if a game needs it.
+- Client-side changes to mirrored components are local predictions. The next server state overwrites them.
+
 ### ADR-0257: Reused material for plain renderers in extraction
 
 **Status:** Accepted (2026-11-24).

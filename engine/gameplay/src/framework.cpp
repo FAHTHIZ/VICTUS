@@ -601,6 +601,13 @@ void update_attributes(scene::Scene& scene, float dt) {
     for (Entity e : list) {
         AttributesComponent* c = attributes(scene, e, false);
         if (!c) continue;
+        if (c->mirrored) { // the server applies and expires effects (ADR-0258)
+            for (ActiveEffect& fx : c->effects)
+                if (fx.spec.duration > 0.0f) fx.remaining = std::max(0.0f, fx.remaining - dt);
+            refresh(*c, pending);
+            flush(scene, e, pending);
+            continue;
+        }
         for (std::size_t i = 0; i < c->effects.size();) {
             ActiveEffect& fx = c->effects[i];
             float step = dt;
@@ -767,6 +774,93 @@ std::uint8_t index_of(const char* const (&names)[N], const Value& v) {
 }
 
 } // namespace
+
+json::Value replication_key(std::string_view component, const json::Value& state) {
+    if (component != "Attributes" || !state.is_object()) return state;
+    Value key = Value::object();
+    for (const auto& [k, v] : state.as_object()) {
+        if (k != "effects" || !v.is_array()) {
+            key.set(k, v);
+            continue;
+        }
+        Value fxs = Value::array();
+        for (const Value& fx : v.as_array()) {
+            if (!fx.is_object()) continue;
+            Value f = Value::object();
+            for (const auto& [fk, fv] : fx.as_object())
+                if (fk != "remaining" && fk != "next_tick") f.set(fk, fv);
+            fxs.push(std::move(f));
+        }
+        key.set(k, std::move(fxs));
+    }
+    return key;
+}
+
+Status apply_replicated(scene::Scene& scene, Entity e, std::string_view component, const json::Value& state) {
+    ecs::World& w = scene.world();
+    if (!w.alive(e)) return make_error(ErrorCode::InvalidArgument, "apply_replicated: entity is not alive");
+    const scene::ComponentSerializer* ser = scene::SerializerRegistry::instance().by_name(component);
+    if (!ser) return make_error(ErrorCode::NotFound, "apply_replicated: unknown component '" + std::string(component) + "'");
+    if (state.is_null()) {
+        w.remove_raw(e, ser->id);
+        return {};
+    }
+    if (!state.is_object()) return make_error(ErrorCode::InvalidArgument, "apply_replicated: state must be an object");
+    // Values before the update, so the change events report what this client saw.
+    std::vector<std::pair<std::string, float>> old_values;
+    std::vector<std::pair<std::string, std::uint32_t>> old_items;
+    if (component == "Attributes") {
+        if (const auto* a = w.get<AttributesComponent>(e))
+            for (const Attribute& x : a->attributes) old_values.emplace_back(x.name, x.value);
+    } else if (component == "Inventory") {
+        if (const auto* inv = w.get<InventoryComponent>(e))
+            for (const ItemStack& s : inv->slots) {
+                auto it = std::find_if(old_items.begin(), old_items.end(), [&](const auto& p) { return p.first == s.item; });
+                if (it == old_items.end()) old_items.emplace_back(s.item, s.count);
+                else it->second += s.count;
+            }
+    }
+    void* raw = w.get_raw(e, ser->id);
+    const bool fresh = raw == nullptr;
+    if (fresh) raw = w.add_raw(e, ser->id);
+    if (Status st = ser->load(raw, state); !st.ok()) {
+        if (fresh) w.remove_raw(e, ser->id);
+        return st;
+    }
+    if (component == "Attributes") {
+        auto& a = *static_cast<AttributesComponent*>(raw);
+        a.mirrored = true;
+        // Keep the previous values: the next update_attributes refresh emits the changes.
+        for (Attribute& x : a.attributes)
+            for (const auto& [name, v] : old_values)
+                if (name == x.name) x.value = v;
+    } else if (component == "Inventory") {
+        std::vector<std::pair<std::string, std::uint32_t>> now;
+        for (const ItemStack& s : static_cast<InventoryComponent*>(raw)->slots) {
+            auto it = std::find_if(now.begin(), now.end(), [&](const auto& p) { return p.first == s.item; });
+            if (it == now.end()) now.emplace_back(s.item, s.count);
+            else it->second += s.count;
+        }
+        const auto count_in = [](const auto& list, const std::string& item) -> std::int64_t {
+            for (const auto& [name, n] : list)
+                if (name == item) return n;
+            return 0;
+        };
+        const auto report = [&](const std::string& item) {
+            const std::int64_t before = count_in(old_items, item), after = count_in(now, item);
+            if (before == after) return;
+            Value p = Value::object();
+            p.set("item", item);
+            p.set("delta", static_cast<double>(after - before));
+            p.set("count", static_cast<double>(after));
+            emit_event(scene, "inventory_changed", std::move(p), e, e);
+        };
+        for (const auto& [item, n] : now) report(item);
+        for (const auto& [item, n] : old_items)
+            if (count_in(now, item) == 0) report(item);
+    }
+    return {};
+}
 
 void register_framework_components() {
     static std::once_flag once;

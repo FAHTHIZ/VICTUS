@@ -131,6 +131,10 @@ struct AttributesComponent {
     std::vector<ActiveEffect> effects;
     std::uint64_t next_effect{1};
     std::uint64_t definition_hash{0};
+    // A client's copy of server-authoritative attributes (ADR-0258, set by apply_replicated):
+    // effect timers keep counting down for UI, but periodic effects and expiry are left to the
+    // server, whose next state replaces this copy. Not serialized.
+    bool mirrored{false};
 };
 // Parses an AttributeSet definition; fails with the offending entry.
 [[nodiscard]] Result<std::vector<Attribute>> parse_attributes(std::string_view definition);
@@ -189,6 +193,18 @@ std::uint32_t remove_item(scene::Scene& scene, Entity e, std::string_view item, 
 [[nodiscard]] std::uint32_t item_count(scene::Scene& scene, Entity e, std::string_view item);
 // Moves up to `count` items; only what fits in `to` leaves `from`. Returns the amount moved.
 std::uint32_t transfer_item(scene::Scene& scene, Entity from, Entity to, std::string_view item, std::uint32_t count);
+
+// ---- network replication (ADR-0258) ----------------------------------------------------------------
+
+// The part of a component's serialized state (its SerializerRegistry JSON) that decides whether
+// it must be sent again: the state itself, except fields that change every tick on their own
+// (effect timers in "Attributes"). Equal keys mean clients already have the state.
+[[nodiscard]] json::Value replication_key(std::string_view component, const json::Value& state);
+// Applies a server's state of a registered component to `e` on a client; a null state removes
+// the component. "Attributes" becomes a mirrored copy and emits `attribute_changed` /
+// `attribute_depleted` for changed values on the next attribute update; "Inventory" emits
+// `inventory_changed` {item, delta, count} per changed item at once.
+Status apply_replicated(scene::Scene& scene, Entity e, std::string_view component, const json::Value& state);
 
 // Registers the components above (called by register_components).
 void register_framework_components();

@@ -5,6 +5,7 @@
 #include "victus/core/hash.hpp"
 #include "victus/core/log.hpp"
 #include "victus/core/profiler.hpp"
+#include "victus/gameplay/framework.hpp"
 #include "victus/net/wire.hpp"
 #include "victus/physics/physics.hpp"
 #include "victus/scene/reflect.hpp"
@@ -45,7 +46,9 @@ enum Msg : std::uint8_t {
     kSnapshot = 16,
     kServerGoodbye = 17,
     kRoster = 18,
+    kComponents = 19, // varuint net_id, varuint n, n x (str component, str json; null = removed)
 };
+constexpr std::size_t kMaxComponentBytes = 64 * 1024;
 enum SpawnKind : std::uint8_t { kSceneEntity = 0, kPlayer = 1 };
 constexpr std::size_t kMaxInputFrames = 8;
 constexpr std::size_t kMaxGameId = 256;
@@ -512,6 +515,8 @@ struct NetServer::Impl {
         json::Value sent_vars = json::Value::object();
         // Debugging counters (replication()).
         std::uint64_t updates{0}, bytes{0}, var_updates{0}, var_bytes{0}, deferred{0};
+        std::uint64_t component_updates{0}, component_bytes{0};
+        std::map<std::string, json::Value, std::less<>> sent_components; // replication keys
         double last_update{-1};
         std::set<std::uint16_t> relevant_to; // client ids whose latest snapshot considered it
     };
@@ -646,6 +651,56 @@ struct NetServer::Impl {
         w.quat(tr ? tr->rotation : math::Quat{});
         w.str(t.name);
     }
+    // Replicated component states of `t` (ADR-0258): all present ones when `full`, else only
+    // those whose replication key changed since the last broadcast (updating the keys). Returns
+    // the number written; nothing is written when it is 0.
+    float component_accum{0};
+    std::size_t write_components(ByteWriter& w, std::uint32_t id, Tracked& t, bool full) {
+        const auto& reg = scene::SerializerRegistry::instance();
+        std::vector<std::pair<const std::string*, json::Value>> out;
+        for (const std::string& name : options.replicated_components) {
+            const scene::ComponentSerializer* ser = reg.by_name(name);
+            if (!ser) continue;
+            const void* raw = scene->world().get_raw(t.e, ser->id);
+            const auto sent = t.sent_components.find(name);
+            if (!raw) {
+                if (full || sent == t.sent_components.end()) continue;
+                t.sent_components.erase(sent);
+                out.emplace_back(&name, json::Value{});
+                continue;
+            }
+            json::Value state = ser->save(raw);
+            if (full) {
+                out.emplace_back(&name, std::move(state));
+                continue;
+            }
+            json::Value key = gameplay::replication_key(name, state);
+            if (sent != t.sent_components.end() && sent->second == key) continue;
+            t.sent_components[name] = std::move(key);
+            out.emplace_back(&name, std::move(state));
+        }
+        std::size_t n = 0;
+        std::vector<std::pair<const std::string*, std::vector<std::uint8_t>>> encoded;
+        for (auto& [name, state] : out) {
+            auto bytes = encode_json(state);
+            if (bytes.size() > kMaxComponentBytes) {
+                VICTUS_LOG_WARN("net", "component {} of net id {} is larger than {} bytes; not replicated", *name, id, kMaxComponentBytes);
+                continue;
+            }
+            encoded.emplace_back(name, std::move(bytes));
+            ++n;
+        }
+        if (n == 0) return 0;
+        w.u8(kComponents);
+        w.varuint(id);
+        w.varuint(n);
+        for (const auto& [name, bytes] : encoded) {
+            w.str(*name);
+            w.str(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+        }
+        return n;
+    }
+
     void write_vars(ByteWriter& w, std::uint32_t id, const json::Value& vars) {
         w.u8(kVars);
         w.varuint(id);
@@ -757,7 +812,7 @@ struct NetServer::Impl {
         w.u64(c.token);
         send(c, Channel::Reliable, w);
         // Existing world state, then this client's player (announced to everyone).
-        for (const auto& [id, t] : tracked) {
+        for (auto& [id, t] : tracked) {
             if (!scene->world().alive(t.e)) continue;
             ByteWriter sw;
             write_spawn(sw, id, t);
@@ -767,6 +822,8 @@ struct NetServer::Impl {
                 write_vars(vw, id, st->vars);
                 send(c, Channel::Reliable, vw);
             }
+            ByteWriter cw;
+            if (write_components(cw, id, t, true)) send(c, Channel::Reliable, cw);
         }
         if (rejoin) {
             ByteWriter rw;
@@ -974,6 +1031,23 @@ struct NetServer::Impl {
             for (const auto& [peer, c] : clients) receivers += c.welcomed;
             tr.var_updates += receivers;
             tr.var_bytes += receivers * vw.size();
+        }
+        // Replicated components (ADR-0258): reliable, whole state of each changed component.
+        component_accum += dt;
+        const float component_interval = 1.0f / std::max(0.1f, options.component_rate);
+        if (!options.replicated_components.empty() && component_accum + 1e-5f >= component_interval) {
+            component_accum = std::fmod(component_accum, component_interval);
+            std::uint64_t receivers = 0;
+            for (const auto& [peer, c] : clients) receivers += c.welcomed;
+            for (auto& [id, tr] : tracked) {
+                if (!w.alive(tr.e)) continue;
+                ByteWriter cw;
+                const std::size_t n = write_components(cw, id, tr, false);
+                if (!n) continue;
+                broadcast(Channel::Reliable, cw);
+                tr.component_updates += receivers * n;
+                tr.component_bytes += receivers * cw.size();
+            }
         }
         // Snapshots per client within the byte budget, highest accumulated priority first.
         const float interval = 1.0f / std::max(1.0f, options.snapshot_rate);
@@ -1209,6 +1283,8 @@ std::vector<ReplicationInfo> NetServer::replication() const {
         r.bytes = t.bytes;
         r.var_updates = t.var_updates;
         r.var_bytes = t.var_bytes;
+        r.component_updates = t.component_updates;
+        r.component_bytes = t.component_bytes;
         r.last_update = t.last_update;
         r.deferred = t.deferred;
         for (const std::uint16_t c : t.relevant_to)
@@ -1291,6 +1367,7 @@ struct NetClient::Impl {
         bool confirmed{true}; // re-announced by the server since the last rejoin
         bool player{false};
         std::uint64_t updates{0}, bytes{0}, var_updates{0}, var_bytes{0}; // replication()
+        std::uint64_t component_updates{0}, component_bytes{0};
         double last_update{-1};
     };
     std::map<std::uint32_t, Remote> entities;
@@ -1492,6 +1569,32 @@ struct NetClient::Impl {
         for (const auto& [k, val] : v->as_object())
             if (!val.is_null()) merged.set(k, val);
         st.vars = std::move(merged);
+    }
+
+    void handle_components(ByteReader& r) {
+        const std::size_t size = r.remaining() + 1; // + message type byte
+        const auto net_id = static_cast<std::uint32_t>(r.varuint());
+        const std::uint64_t n = r.varuint();
+        if (!r.ok() || n > 64) return;
+        std::vector<std::pair<std::string, std::string>> list;
+        for (std::uint64_t i = 0; i < n && r.ok(); ++i) {
+            std::string name = r.str(256);
+            std::string text = r.str(kMaxComponentBytes);
+            list.emplace_back(std::move(name), std::move(text));
+        }
+        if (!r.done()) return;
+        const auto it = entities.find(net_id);
+        if (it == entities.end() || !scene->world().alive(it->second.e)) return;
+        it->second.component_bytes += size;
+        for (const auto& [name, text] : list) {
+            const auto& allowed = options.replicated_components;
+            if (std::find(allowed.begin(), allowed.end(), name) == allowed.end()) continue;
+            auto v = decode_json(text, kMaxComponentBytes);
+            if (!v) continue;
+            ++it->second.component_updates;
+            if (Status st = gameplay::apply_replicated(*scene, it->second.e, name, *v); !st.ok())
+                VICTUS_LOG_WARN("net", "replicated component {}: {}", name, st.error().message);
+        }
     }
 
     void handle_roster(ByteReader& r) {
@@ -1698,6 +1801,7 @@ struct NetClient::Impl {
             case kSpawn: handle_spawn(r); break;
             case kDespawn: handle_despawn(r); break;
             case kVars: handle_vars(r); break;
+            case kComponents: handle_components(r); break;
             case kRoster: handle_roster(r); break;
             case kSnapshot:
                 last_snapshot_bytes = static_cast<std::uint32_t>(ev.data.size());
@@ -1949,6 +2053,8 @@ std::vector<ReplicationInfo> NetClient::replication() const {
         r.bytes = rm.bytes;
         r.var_updates = rm.var_updates;
         r.var_bytes = rm.var_bytes;
+        r.component_updates = rm.component_updates;
+        r.component_bytes = rm.component_bytes;
         r.last_update = rm.last_update;
         r.vars = var_count(m.scene, rm.e);
         out.push_back(std::move(r));
