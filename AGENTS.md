@@ -27,6 +27,7 @@ Move quickly without sacrificing correctness.
 6. Establish baselines before setting performance targets. Never invent deadlines or benchmark numbers.
 
 ## Required loop — repeat
+0. On every fresh checkout, run `python3 scripts/install-git-hooks.py` before creating commits. The local `commit-msg` hook removes recognized AI-tool/bot credit trailers while preserving human co-authors and sign-offs; see CONTRIBUTING.md. It does not rewrite existing history.
 1. Inspect branch, working tree, latest commits, roadmap, CI and existing code. Never overwrite unseen work.
 2. Choose highest-priority unblocked roadmap item.
 3. Research primary docs, upstream source, release notes, issues, benchmarks and license texts. Record versions, dates, URLs and uncertainty.
