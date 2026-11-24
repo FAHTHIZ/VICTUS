@@ -546,22 +546,27 @@ def layout(J, torso: Torso, key):
         add(Plate("BeltBack", B, [(-0.16, z(0.185)), (0.16, z(0.185)), (0.16, z(0.145)), (-0.16, z(0.145))],
                   thickness=0.011, crown=0.012, tone=1, round=0.004, gate=torso_gate, mirror=False))
     else:
-        # Chest: one sculpted bust plate split by a lit centre seam.
-        add(Plate("Bust.L", F, [(0.006, z(0.90)), (0.05, z(0.93)), (0.092, z(0.915)), (0.118, z(0.85)), (0.122, z(0.74)),
-                                (0.114, z(0.65)), (0.08, z(0.605)), (0.035, z(0.61)), (0.006, z(0.645))],
-                  thickness=0.009, crown=0.035, edge=0.45, trim=1, round=0.014, gate=torso_gate, fit=0, fair=3))
-        add(Plate("Sternum", F, [(-0.004, z(0.90)), (0.004, z(0.90)), (0.004, z(0.66)), (-0.004, z(0.66))],
-                  thickness=0.006, crown=0.004, tone=1, trim=2, round=0.002, gate=torso_gate, mirror=False))
+        # Chest (ADR-0252, the sheet's front views): one sculpted pearl bust plate from the collar
+        # notch around both breasts, no centre seam; its outer edges stop short of the arms so the
+        # black straps run from the collar over the shoulders and down the flanks.
+        half = [(0.0, z(0.905)), (0.03, z(0.925)), (0.07, z(0.935)), (0.102, z(0.915)), (0.122, z(0.86)),
+                (0.126, z(0.76)), (0.116, z(0.67)), (0.084, z(0.62)), (0.045, z(0.625)), (0.0, z(0.685))]
+        add(Plate("Bust", F, half + [(-x_, z_) for x_, z_ in half[-2:0:-1]],
+                  thickness=0.009, crown=0.035, edge=0.45, trim=1, round=0.014, gate=torso_gate, fit=0, fair=3,
+                  mirror=False))
         # Corset: one smooth graphite piece cinching the waist, pointed under the bust and at the
-        # groin (the sheet's leotard line); the undersuit's violet lines frame it.
-        add(Plate("Corset", F, [(0.0, z(0.585)), (0.05, z(0.57)), (0.092, z(0.56)), (0.084, z(0.44)), (0.080, z(0.32)),
-                                (0.092, z(0.20)), (0.06, z(0.12)), (0.0, z(0.08)), (-0.06, z(0.12)), (-0.092, z(0.20)),
-                                (-0.080, z(0.32)), (-0.084, z(0.44)), (-0.092, z(0.56)), (-0.05, z(0.57))],
+        # groin (the sheet's leotard line).
+        add(Plate("Corset", F, [(0.0, z(0.585)), (0.05, z(0.57)), (0.092, z(0.56)), (0.084, z(0.44)), (0.076, z(0.32)),
+                                (0.080, z(0.20)), (0.05, z(0.06)), (0.0, z(-0.04)), (-0.05, z(0.06)), (-0.080, z(0.20)),
+                                (-0.076, z(0.32)), (-0.084, z(0.44)), (-0.092, z(0.56)), (-0.05, z(0.57))],
                   thickness=0.006, crown=0.03, edge=0.5, tone=1, round=0.010, gate=torso_gate, mirror=False))
-        add(Plate("Hip.L", S, [(0.075, z(0.16)), (-0.03, z(0.16)), (-0.055, z(0.02)), (-0.045, z(-0.16)), (0.02, z(-0.22)),
-                               (0.08, z(-0.12)), (0.095, z(0.02))],
-                  thickness=0.007, crown=0.03, trim=1, round=0.012,
-                  gate=(J["UpperLeg.L"][0] + np.array([0.03, 0, 0.12]), J["UpperLeg.L"][0] - np.array([-0.03, 0, 0.14]), 0.13)))
+        # Hip bands: the sheet's white flares sweeping from the side of the waist down into the
+        # groin beside the corset's point, over the black high-cut leotard.
+        add(Plate("HipBand.L", F, [(0.112, z(0.31)), (0.150, z(0.26)), (0.150, z(0.15)), (0.112, z(0.04)),
+                                   (0.074, z(-0.06)), (0.046, z(-0.14)), (0.030, z(-0.12)), (0.052, z(-0.03)),
+                                   (0.088, z(0.08)), (0.110, z(0.19))],
+                  thickness=0.007, crown=0.025, trim=1, round=0.010,
+                  gate=(hips - np.array([0, 0, 0.18]), hips + np.array([0, 0, 0.16]), 0.22)))
         add(Plate("Blade.L", B, [(0.08, z(0.94)), (0.125, z(0.92)), (0.142, z(0.82)), (0.14, z(0.68)), (0.115, z(0.60)),
                                  (0.078, z(0.64))],
                   thickness=0.011, crown=0.035, trim=1, round=0.012, gate=torso_gate))
@@ -573,6 +578,13 @@ def layout(J, torso: Torso, key):
                                     (0.06, z(0.20)), (0.0, z(0.19)), (-0.06, z(0.20)), (-0.09, z(0.26)), (-0.088, z(0.40)),
                                     (-0.098, z(0.52)), (-0.07, z(0.57))],
                   thickness=0.006, crown=0.03, edge=0.5, tone=1, round=0.010, gate=torso_gate, mirror=False))
+        # The sheet's mechanical spine: a column of graphite vertebra segments riding on the spine
+        # housing and the corset back, from between the shoulder blades to the small of the back.
+        for i, t1 in enumerate((0.90, 0.835, 0.77, 0.705, 0.64, 0.575, 0.51, 0.445, 0.38)):
+            w = 0.024 - 0.0012 * i
+            add(Plate(f"Vertebra{i}", B, [(-w, z(t1)), (w, z(t1)), (w * 0.78, z(t1 - 0.05)), (-w * 0.78, z(t1 - 0.05))],
+                      thickness=0.007, crown=0.004, tone=1, round=0.003, gate=torso_gate, mirror=False,
+                      facets=3, facet_mix=0.9, lift=0.011 if t1 > 0.6 else 0.006))
 
     for t in ("L",):
         sh, el, wr = J[f"UpperArm.{t}"][0], J[f"LowerArm.{t}"][0], J[f"Hand.{t}"][0]
@@ -607,8 +619,15 @@ def layout(J, torso: Torso, key):
             # Outer upper-arm plate over the graphite sleeve.
             add(Plate("UpperArm.L", ua, [(35, 0.50), (150, 0.48), (165, 0.62), (150, 0.84), (35, 0.86), (20, 0.68)],
                       thickness=0.016, crown=0.02, round=0.008, trim=1, gate=arm_gate, facets=4, facet_mix=0.8))
-        add(Plate("Bicep.L", ua, [(-40, 0.66), (150 if nova else 28, 0.66), (150 if nova else 28, 0.86), (-40, 0.86)],
-                  thickness=0.008, crown=0.015, tone=1, round=0.008, gate=arm_gate))
+        if nova:
+            # The sheet's white upper arm: a pearl sleeve wrapping all but the inner arm, where the
+            # black undersuit shows as a strip down to the elbow.
+            add(Plate("Bicep.L", ua, [(-30, 0.62), (60, 0.60), (150, 0.62), (205, 0.64), (205, 0.88), (120, 0.90),
+                                      (30, 0.90), (-30, 0.86)],
+                      thickness=0.008, crown=0.02, trim=1, round=0.010, gate=arm_gate, facets=4, facet_mix=0.35))
+        else:
+            add(Plate("Bicep.L", ua, [(-40, 0.66), (28, 0.66), (28, 0.86), (-40, 0.86)],
+                      thickness=0.008, crown=0.015, tone=1, round=0.008, gate=arm_gate))
         add(Plate("Elbow.L", fa, [(120, -0.08), (240, -0.08), (250, 0.10), (180, 0.14), (110, 0.10)],
                   thickness=0.013, crown=0.02, tone=1, round=0.008, gate=(el - da * 0.08, el + _unit(wr - el) * 0.08, 0.09)))
         # Forearm: a gauntlet wrapping all but the inner wrist, its top cut on a slant.
@@ -633,13 +652,15 @@ def layout(J, torso: Torso, key):
             # above the knee, and a separate knee-guard plate below the cut.
             add(Plate("ThighLow.L", th, [(-35, 0.80), (40, 0.74), (130, 0.70), (160, 0.74), (160, 0.88), (70, 0.92), (-30, 0.90)],
                       thickness=0.009, crown=0.03, round=0.010, trim=0, gate=thick_gate, facets=4, facet_mix=0.35))
-            add(Plate("Thigh.L", th, [(-40, 0.30), (-20, 0.12), (60, 0.04), (140, 0.08), (165, 0.30), (165, 0.64),
+            # Its top edge runs parallel to the hip band, high outside and low inside, so the
+            # leotard's black shows as a triangle at the top of the inner thigh (ADR-0252).
+            add(Plate("Thigh.L", th, [(-40, 0.42), (0, 0.34), (60, 0.20), (120, 0.11), (165, 0.18), (165, 0.64),
                                      (140, 0.62), (40, 0.68), (-35, 0.74), (-40, 0.70)],
                       thickness=0.009, crown=0.045, trim=1, round=0.014, gate=thick_gate, facets=5, facet_mix=0.35))
             add(Plate("Hamstring.L", th, [(205, 0.34), (238, 0.36), (238, 0.82), (205, 0.84)],
                       thickness=0.008, crown=0.015, tone=0, round=0.006, gate=thick_gate))
             # A raised outer-thigh panel over the sweep, its own lit groove the sheet's violet line.
-            add(Plate("ThighPanel.L", th, [(35, 0.20), (125, 0.24), (125, 0.56), (35, 0.52)],
+            add(Plate("ThighPanel.L", th, [(45, 0.30), (125, 0.26), (125, 0.58), (45, 0.56)],
                       thickness=0.006, crown=0.015, round=0.010, trim=1, gate=thick_gate, lift=0.010,
                       facets=3, facet_mix=0.6))
         # Knee: a faceted graphite cop.

@@ -258,38 +258,27 @@ def frame_maps(tx, P, N, L: Landmarks, style, kind, seed):
 
 
 def _nova_black(P, J, L, zone_any):
-    """Nova's black under-layer (ORION & NOVA sheet, Frame 02): a high-cut leotard from under the
-    bust through the crotch covering the seat, a centre strip up to the collar, the spine, gloves,
-    and every flex zone (elbows, knees, shoulder caps, waist, neck). 1 = black, soft-edged."""
-    hips, neck = J["Hips"][0], J["Neck"][0]
-    zt = lambda t_: hips[2] + (neck[2] - hips[2]) * t_  # noqa: E731
+    """Nova's black under-layer (ORION & NOVA sheet, Frame 02; ADR-0252): the whole undersuit is
+    black composite from the neck to the top of the thighs - the collar, the straps over the
+    shoulders and down the flanks, the arms, gloves and every gap between the pearl plates - and
+    the high-cut leotard reaches down the inner thigh along a line parallel to the hip bands. The
+    legs below that line are pearl except the knee joints. 1 = black, soft-edged."""
+    hips = J["Hips"][0]
     x, y, z = P[:, 0], P[:, 1], P[:, 2]
     ax = np.abs(x)
-    # Torso only: away from the arms.
-    arm_d = np.full(len(P), 9.0)
-    for t in ("L", "R"):
-        for a, b in (("UpperArm", "LowerArm"), ("LowerArm", "Hand")):
-            pa, pb_ = J[f"{a}.{t}"][0], J[f"{b}.{t}"][0]
-            tt = np.clip(((P - pa) @ (pb_ - pa)) / float((pb_ - pa) @ (pb_ - pa)), 0, 1.4)
-            arm_d = np.minimum(arm_d, np.linalg.norm(P - pa - np.outer(tt, pb_ - pa), axis=1))
-    torso = (ax < 0.20) * soft(-arm_d, -0.075, -0.060)
     back = smooth((y - hips[1] + 0.01) / 0.05)  # 0 front, 1 back
-    # Leg line: high-cut over the hip bones in front, full seat behind.
-    front_leg = hips[2] - 0.115 + 1.35 * np.maximum(ax - 0.025, 0)
-    back_leg = hips[2] - 0.135 + 0.30 * np.maximum(ax - 0.03, 0)
+    # Leg line: high outside, low on the inner thigh in front; under the glute fold behind.
+    front_leg = hips[2] - 0.035 - 1.05 * np.clip(0.175 - ax, 0, 0.14)
+    back_leg = hips[2] - 0.165 + 0.25 * np.maximum(ax - 0.03, 0)
     leg_line = front_leg * (1 - back) + back_leg * back
-    top = zt(0.60) * (1 - back) + zt(0.66) * back
-    leo = soft(leg_line - z, -0.003, 0.003) * soft(z - top, -0.004, 0.004) * torso
-    # Centre strip to the collar and the spine.
-    strip = soft(ax - 0.016, -0.002, 0.002) * (z > zt(0.55)) * (z < neck[2] + 0.05) * (1 - back)
-    spine = soft(ax - 0.045, -0.003, 0.003) * (z > zt(0.30)) * (z < neck[2] + 0.05) * back
+    upper = soft(leg_line - z, -0.004, 0.004)
     # Gloves: past the wrist.
     glove = np.zeros(len(P))
     for t in ("L", "R"):
         el, wr = J[f"LowerArm.{t}"][0], J[f"Hand.{t}"][0]
         d = _unit(wr - el)
         glove = np.maximum(glove, soft(-((P - wr) @ d), -0.025, -0.012) * (np.linalg.norm(P - wr, axis=1) < 0.25))
-    return np.clip(np.maximum.reduce([leo, strip * torso, spine * torso, glove, zone_any]), 0, 1)
+    return np.clip(np.maximum.reduce([upper, glove, zone_any]), 0, 1)
 
 
 def armor_maps(tx, P, N, L: Landmarks, style, kind, cuff, trim, attrs, seed, tone=None):
@@ -514,7 +503,7 @@ def armor_maps(tx, P, N, L: Landmarks, style, kind, cuff, trim, attrs, seed, ton
     # small one at the top of the sternum seam (Nova).
     zt = lambda t_: J["Hips"][0][2] + (J["Neck"][0][2] - J["Hips"][0][2]) * t_  # noqa: E731
     if L.key == "nova":
-        vz, vw, vh, vt = zt(0.86), 0.032, 0.028, 0.0070
+        vz, vw, vh, vt = zt(0.875), 0.040, 0.032, 0.0085
     else:
         vz, vw, vh, vt = zt(0.80), 0.050, 0.044, 0.0105
     fr_ = (plate & (N[:, 1] < -0.35) & (np.abs(P[:, 0]) < vw + 0.01) & (np.abs(P[:, 2] - vz) < vh)).astype(float)

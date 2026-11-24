@@ -67,9 +67,10 @@ STYLES = {
                    armor_rough=0.14, frame_rough=0.48, trim_light=0.0, solid_eyes=True, mouth_glyph=False),
     # Nova (Frame 02): a pearl-white undersuit and white ceramic plates over a glossy black
     # leotard, collar, gloves and joints, silver hardware, ice-blue light.
-    "nova": Style(frame=(0.66, 0.66, 0.68), armor=(0.80, 0.80, 0.82), accent=(0.011, 0.011, 0.013),
+    # ADR-0252: the sheet's primary armour is a pearl silver-white, a little grey, not paper white.
+    "nova": Style(frame=(0.56, 0.565, 0.58), armor=(0.60, 0.605, 0.62), accent=(0.011, 0.011, 0.013),
                   metal=(0.70, 0.71, 0.74), glow=(0.62, 0.84, 1.0), visor=(0.0020, 0.0030, 0.0050),
-                  armor_rough=0.18, frame_rough=0.46, trim_light=0.12),
+                  armor_rough=0.16, frame_rough=0.46, trim_light=0.12),
 }
 
 # Face labels of the Armor part (bake masks and per-piece looks).
@@ -137,7 +138,16 @@ class Head:
         g = np.stack(np.meshgrid(*[lo[k] + np.arange(n) * cell for k in range(3)], indexing="ij"), -1).reshape(-1, 3)
         d, nn = cKDTree(pts).query(g, workers=-1)
         inside = ((g - pts[nn]) * nrm[nn]).sum(1) < 0
-        occ = (inside & (d < 0.12)).astype(float).reshape(n, n, n)
+        occ = (inside & (d < 0.12)).reshape(n, n, n)
+        # The nearest sample's normal can mis-sign voxels far from the surface (a detached pocket
+        # behind an ear at the grid's edge, which the hull and the hair cards would wrap): keep
+        # only the volume connected to the head's centre.
+        occ[:3], occ[-3:], occ[:, :3], occ[:, -3:], occ[:, :, :3], occ[:, :, -3:] = (False,) * 6
+        lab, _ = ndimage.label(occ)
+        ci = tuple(np.clip(np.rint((self.c - lo) / cell).astype(int), 0, n - 1))
+        if lab[ci] > 0:
+            occ = lab == lab[ci]
+        occ = occ.astype(float)
         occ = ndimage.gaussian_filter(occ, blur / cell)
         self.occ, self.lo, self.cell, self.n = occ, lo, cell, n
 
