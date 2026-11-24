@@ -635,6 +635,13 @@ def layout(J, torso: Torso, key):
                                     (-100, 0.90)],
                   thickness=0.013 * k, crown=0.035, trim=1, round=0.010, gate=(el, wr, 0.09),
                   facets=4 if nova else 6, facet_mix=0.45 if nova else 0.65))
+        if nova:
+            # The sheet's forearms (ADR-0252): black segmented inserts down the outer side of the
+            # pearl gauntlet.
+            for i, (t0, t1) in enumerate(((0.30, 0.46), (0.50, 0.66), (0.70, 0.86))):
+                add(Plate(f"ForearmSeg{i}.L", fa, [(35, t0), (115, t0 + 0.01), (110, t1), (40, t1 - 0.01)],
+                          thickness=0.005, crown=0.010, tone=1, round=0.005, gate=(el, wr, 0.09),
+                          lift=0.012, facets=3, facet_mix=0.7))
         # Thighs: the front-outer plate with a slanted hip cut, a rear plate.
         thick_gate = (hp + _unit(kn - hp) * 0.02, kn, 0.14)
         if not nova:
@@ -666,7 +673,7 @@ def layout(J, torso: Torso, key):
         # Knee: a faceted graphite cop.
         ks = Chart("limb", 1.0, kn, an, seam=-120, radius=0.06)
         add(Plate("Kneecap.L", ks, [(0, -0.075), (40, -0.05), (42, 0.035), (0, 0.075), (-42, 0.035), (-40, -0.05)],
-                  thickness=0.030 * k, crown=0.02, round=0.006, trim=1, tone=1 if nova else 0, facets=4, facet_mix=0.5 if nova else 0.85,
+                  thickness=0.030 * k, crown=0.02, round=0.006, trim=1, tone=0, facets=4, facet_mix=0.5 if nova else 0.85,
                   gate=(kn - _unit(an - kn) * 0.09, kn + _unit(an - kn) * 0.08, 0.12)))
         add(Plate("Knee.L", ks, [(0, -0.13), (58, -0.085), (62, 0.05), (0, 0.11), (-62, 0.05), (-58, -0.085)],
                   thickness=0.020 * k, crown=0.025, tone=1, round=0.008, gate=(kn - _unit(an - kn) * 0.09, kn + _unit(an - kn) * 0.08, 0.12)))
