@@ -272,3 +272,37 @@ TEST_CASE("ecs: runtime-defined component") {
     CHECK(w.match(d).size() == 2); // {Dynamic16} (now empty) and {Dynamic16, Position}
     CHECK(rows == 1);
 }
+
+TEST_CASE("ecs: each_archetype visits non-empty matching archetypes with optional columns") {
+    World w;
+    for (int i = 0; i < 3; ++i) w.add<Position>(w.create()).x = static_cast<float>(i);
+    for (int i = 0; i < 2; ++i) {
+        const Entity e = w.create();
+        w.add<Position>(e).x = 10.0f + static_cast<float>(i);
+        w.add<Velocity>(e).x = 1.0f;
+    }
+    const Entity empty = w.create();
+    w.add<Position>(empty);
+    w.add<Tag>(empty);
+    w.destroy(empty); // leaves an empty Position+Tag archetype behind
+    std::size_t archetypes = 0, rows = 0, with_velocity = 0;
+    float sum = 0.0f;
+    w.each_archetype<Position>([&](Archetype& a) {
+        ++archetypes;
+        CHECK(w.iterating());
+        CHECK(a.size() > 0);
+        const Position* p = a.column_data<Position>();
+        const Velocity* v = a.column_data<Velocity>();
+        REQUIRE(p != nullptr);
+        for (std::size_t r = 0; r < a.size(); ++r) {
+            sum += p[r].x;
+            if (v) with_velocity += v[r].x > 0.0f ? 1u : 0u;
+            ++rows;
+        }
+    });
+    CHECK(archetypes == 2);
+    CHECK(rows == 5);
+    CHECK(with_velocity == 2);
+    CHECK(sum == doctest::Approx(0.0f + 1.0f + 2.0f + 10.0f + 11.0f));
+    CHECK_FALSE(w.iterating());
+}

@@ -4043,3 +4043,18 @@ Verified:
 - `tools/characters/test_pipeline.py`: 14/14 passed. `tools/lint/check_docs.py` passes.
 - `docs/images/characters/blender_render_{bodies,heads}.jpg`: the Nova tiles were regenerated.
 - The C++ suites were not run in this pass.
+
+## 2026-11-24 — Cheaper extraction for unchanged renderers (ADR-0230 follow-up)
+
+Built:
+- `ecs::World::each_archetype<Ts...>(fn)`: visits each non-empty matching archetype, so a system resolves optional component columns once per archetype instead of per entity.
+- `runtime::extract_scene` walks mesh renderers per archetype. Foliage, procedural mesh, material overrides and skinned-mesh components come from archetype columns, which removes three `World::get` lookups from every plain renderer. Consecutive renderers that share a primitive reuse the last primitive lookup.
+- `GpuAssetCache::primitive` looks up by `string_view` (transparent hash) without building a key string.
+- `SceneRenderer::submit_static` has a direct-mapped hint (key low bits -> record) in front of the key map. A stale or reused slot fails the key compare and falls back to the map.
+- Tests: `ecs: each_archetype visits non-empty matching archetypes with optional columns`, `gpu instance groups: retained static keys sharing low bits stay distinct objects`.
+
+Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, lavapipe, `SDL_VIDEO_DRIVER=offscreen VICTUS_REQUIRE_GPU=1`):
+- Full `ctest -j2 --output-on-failure`: 50/50 passed in 1,067 s.
+- `victus_bench_runtime --reps 20 --filter retained`, before (3 runs) -> after (5 runs): extract 0.929/0.900/0.946 -> 0.724/0.704/0.679/0.681/0.664 ms; total 1.343/1.274/1.338 -> 1.104/1.100/1.089/1.069/1.050 ms. Transforms (about 0.09 ms) and render (about 0.30 ms) are unchanged.
+- Not verified: the 1 ms accept target (total about 1.05-1.10 ms), physical hardware.
+- Next task: a measured IPO/LTO Release build, then parallel batching.

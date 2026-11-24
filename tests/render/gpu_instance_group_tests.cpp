@@ -276,3 +276,49 @@ TEST_CASE("gpu instance groups: retained static draws promote, leave on change a
     CHECK(max_diff(p.px, k.px) <= 2);
     ctx.destroy(cube);
 }
+
+TEST_CASE("gpu instance groups: retained static keys sharing low bits stay distinct objects") {
+    // The record lookup has a direct-mapped hint indexed by the key's low bits; keys that share
+    // them (here: differing only above bit 40) must still resolve to their own records.
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto& dev = ctx.device();
+    auto cube = ctx.create_mesh(make_cube({0.4f, 0.4f, 0.4f}), "retained_hint_cube").value();
+    Material red;
+    red.base_color = {0.8f, 0.2f, 0.2f, 1};
+    auto made = SceneRenderer::create(ctx);
+    REQUIRE(made.ok());
+    SceneRenderer& r = *made.value();
+    constexpr int kCount = 64;
+    const auto frame = [&](float lift_high) {
+        RenderSettings s = RenderSettings::preset(QualityTier::Low);
+        s.retain_static_draws = true;
+        s.static_promote_frames = 2;
+        r.set_settings(s);
+        r.begin(Camera3D::look_at({0, 12, 30}, {0, 0, 0}), DirectionalLight{}, {});
+        for (int i = 0; i < kCount; ++i) {
+            const auto low = static_cast<std::uint64_t>(i + 1);
+            const Mat4 a = Mat4::translation({static_cast<float>(i % 8) * 1.5f - 6.0f, 0.0f, static_cast<float>(i / 8) * 1.5f - 6.0f});
+            const Mat4 b = Mat4::translation({static_cast<float>(i % 8) * 1.5f - 6.0f, 3.0f + lift_high, static_cast<float>(i / 8) * 1.5f - 6.0f});
+            r.submit_static(low, cube, red, a);
+            r.submit_static(low | (1ull << 40), cube, red, b);
+        }
+        auto target = test::make_target(64, 64);
+        auto cmd = dev.begin_commands();
+        REQUIRE(r.render(cmd, target, 64, 64, rhi::Format::RGBA8_UNORM).ok());
+        cmd.submit_and_wait();
+        dev.destroy(target);
+        return r.stats();
+    };
+    for (int f = 0; f < 3; ++f) (void)frame(0.0f);
+    SceneStats st = frame(0.0f);
+    CHECK(st.static_retained == 2 * kCount);
+    CHECK(st.submitted == 2 * kCount);
+    st = frame(0.0f);
+    CHECK(st.static_rebuilds == 0); // neither key's record was confused with the other
+    CHECK(st.static_retained == 2 * kCount);
+    // Moving only the high-bit set leaves exactly those records.
+    st = frame(1.0f);
+    CHECK(st.static_retained == kCount);
+    ctx.destroy(cube);
+}

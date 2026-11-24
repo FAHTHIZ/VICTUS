@@ -300,6 +300,16 @@ public:
     void par_each(jobs::JobSystem& jobs, std::size_t grain, Fn&& fn);
     template <typename... Ts>
     [[nodiscard]] std::size_t count();
+    // Calls fn(Archetype&) for each archetype having all Ts (iteration rules as each()). Lets a
+    // system resolve optional component columns once per archetype instead of per entity.
+    template <typename... Ts, typename Fn>
+    void each_archetype(Fn&& fn) {
+        const auto& matched = match(desc_of<Ts...>());
+        ++iterating_;
+        for (Archetype* a : matched)
+            if (a->size() > 0) fn(*a);
+        --iterating_;
+    }
 
     // Matching archetypes for a query, cached and updated incrementally.
     [[nodiscard]] const std::vector<Archetype*>& match(const QueryDesc& desc);

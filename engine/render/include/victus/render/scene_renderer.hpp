@@ -1498,6 +1498,7 @@ private:
     std::vector<StaticRecord> static_records_;
     std::vector<std::uint32_t> static_free_;
     std::unordered_map<std::uint64_t, std::uint32_t> static_index_; // key -> record
+    std::vector<std::uint32_t> static_hint_; // key & (size - 1) -> record + 1 (0 = none); power-of-two size
     std::vector<StaticBucket> static_buckets_;
     std::vector<std::uint32_t> static_bucket_free_;
     std::unordered_map<std::uint64_t, std::uint32_t> static_bucket_index_; // bucket key -> bucket

@@ -2156,20 +2156,36 @@ void SceneRenderer::submit_static(std::uint64_t key, const GpuMesh& mesh, const 
         submit_packed(mesh, material, sig, signature_hash(sig), model, key, lightmap_uv_offset);
         return;
     }
-    auto [map_it, inserted] = static_index_.try_emplace(key, 0u);
-    std::uint32_t* const slot_index = &map_it->second;
-    if (inserted) {
-        if (!static_free_.empty()) {
-            *slot_index = static_free_.back();
-            static_free_.pop_back();
-        } else {
-            *slot_index = static_cast<std::uint32_t>(static_records_.size());
-            static_records_.emplace_back();
+    // Direct-mapped hint in front of the key map: entity keys are dense in their low bits, so a
+    // steady-state lookup is one array read and one key compare (stale or reused slots fail the
+    // compare and fall back to the map).
+    const std::size_t hint_slot = static_hint_.empty() ? 0 : static_cast<std::size_t>(key) & (static_hint_.size() - 1);
+    std::uint32_t index = static_hint_.empty() ? 0u : static_hint_[hint_slot];
+    bool inserted = false;
+    if (index != 0 && static_records_[index - 1].key == key) {
+        --index;
+    } else {
+        auto [map_it, fresh] = static_index_.try_emplace(key, 0u);
+        inserted = fresh;
+        if (inserted) {
+            if (!static_free_.empty()) {
+                map_it->second = static_free_.back();
+                static_free_.pop_back();
+            } else {
+                map_it->second = static_cast<std::uint32_t>(static_records_.size());
+                static_records_.emplace_back();
+            }
+            static_records_[map_it->second] = StaticRecord{};
+            static_records_[map_it->second].key = key;
         }
-        static_records_[*slot_index] = StaticRecord{};
-        static_records_[*slot_index].key = key;
+        index = map_it->second;
+        if (static_hint_.size() < static_records_.size() * 2) {
+            std::size_t n = 1024;
+            while (n < static_records_.size() * 2) n *= 2;
+            static_hint_.assign(n, 0u); // refilled lazily
+        }
+        static_hint_[static_cast<std::size_t>(key) & (static_hint_.size() - 1)] = index + 1;
     }
-    const std::uint32_t index = *slot_index;
     StaticRecord& r = static_records_[index];
     if (r.seen_frame == group_frame_ && !inserted) {
         // The same key twice in one frame: not one object; draw this copy individually.

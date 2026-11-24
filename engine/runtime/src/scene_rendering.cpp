@@ -1233,8 +1233,8 @@ void GpuAssetCache::collect_procedural(std::uint32_t keep_frames) {
 }
 
 const render::GpuMesh* GpuAssetCache::primitive(std::string_view name) {
+    if (const auto it = primitives_.find(name); it != primitives_.end()) return &it->second;
     const std::string key(name);
-    if (const auto it = primitives_.find(key); it != primitives_.end()) return &it->second;
     render::MeshData data = primitive_mesh_data(key); // shared with lightmap baking (same fingerprint)
     if (data.indices.empty()) return nullptr;
     auto g = ctx_->create_mesh(data, key);
@@ -2065,10 +2065,8 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
         bool counted{false};
     };
     FoliageView fv;
-    const auto foliage_view = [&](Entity entity) -> bool {
-        const auto* fr = w.get<terrain::FoliageRuntime>(entity);
-        const auto* fc = fr ? w.get<terrain::FoliageComponent>(entity) : nullptr;
-        if (!fc) return false;
+    const auto foliage_view = [&](const terrain::FoliageRuntime* fr, const terrain::FoliageComponent* fc) -> bool {
+        if (!fr || !fc) return false;
         fv = FoliageView{};
         const auto* twt = fr->terrain.is_null() ? nullptr : w.get<WorldTransform>(fr->terrain);
         if (!twt || fr->instances == 0) return true;
@@ -2089,10 +2087,32 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
         fv.revision = h;
         return true;
     };
-    w.each<MeshRendererComponent, WorldTransform>([&](Entity entity, const MeshRendererComponent& mr, const WorldTransform& wt) {
+    // Optional components of the current archetype, resolved once per archetype rather than
+    // looked up per entity (most renderers have none of them).
+    struct OptionalColumns {
+        const terrain::FoliageRuntime* foliage_runtime{nullptr};
+        const terrain::FoliageComponent* foliage{nullptr};
+        const scene::ProceduralMeshComponent* procedural{nullptr};
+        const gameplay::MaterialOverridesComponent* overrides{nullptr};
+        const animation::SkinnedMeshComponent* skinned{nullptr};
+    };
+    OptionalColumns oc;
+    std::string_view last_primitive;
+    const render::GpuMesh* last_primitive_mesh = nullptr;
+    const auto row_of = [](const auto* column, std::size_t row) { return column ? column + row : nullptr; };
+    const auto apply_row_overrides = [](const gameplay::MaterialOverridesComponent* o, render::Material& m) {
+        if (!o) return;
+        m.uv_offset = {m.uv_offset.x + o->uv_offset.x + o->scrolled.x, m.uv_offset.y + o->uv_offset.y + o->scrolled.y};
+        if (o->override_emissive) {
+            m.emissive = o->emissive;
+            m.emissive_strength = o->emissive_strength;
+        }
+    };
+    const auto draw_renderer = [&](Entity entity, std::size_t row, const MeshRendererComponent& mr, const WorldTransform& wt) {
         if (!mr.visible) return;
         const std::uint64_t motion_id = entity.bits() + 1; // stable per entity; never 0 for live entities
-        const bool scattered = foliage_view(entity);
+        const bool scattered = foliage_view(row_of(oc.foliage_runtime, row), row_of(oc.foliage, row));
+        const gameplay::MaterialOverridesComponent* overrides = row_of(oc.overrides, row);
         // `retain`: the mesh is the asset's own (not a per-entity morphed copy), so an unchanged
         // renderer may be drawn from a retained static group (ADR-0230).
         const auto emit = [&](const render::GpuMesh& base, const render::Material& m, bool retain = true) {
@@ -2134,7 +2154,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
                 fv.counted = true;
             }
         };
-        const auto* pm = w.get<scene::ProceduralMeshComponent>(entity);
+        const auto* pm = row_of(oc.procedural, row);
         if (pm && pm->mesh) {
             const render::GpuMesh* mesh = assets.procedural(*pm->mesh);
             if (!mesh) return; // empty geometry draws nothing
@@ -2152,7 +2172,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
                 }
             }
             m.cast_shadows = mr.cast_shadows;
-            apply_overrides(entity, m);
+            apply_row_overrides(overrides, m);
             emit(*mesh, m);
             ++stats.meshes;
             return;
@@ -2176,7 +2196,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
             m.base_color = {m.base_color.r * mr.base_color.r, m.base_color.g * mr.base_color.g,
                             m.base_color.b * mr.base_color.b, m.base_color.a * mr.base_color.a};
             m.cast_shadows = mr.cast_shadows;
-            apply_overrides(entity, m);
+            apply_row_overrides(overrides, m);
             const GpuModel& gm = **model;
             // Morph targets: the entity's own weights, else its node's (the Animator writes the
             // node entity; multi-primitive nodes draw from child entities), else the mesh defaults.
@@ -2201,7 +2221,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
                 }
                 // Corrective shapes (ADR-0220): weights driven by the posed joints' local rotations,
                 // so clips, IK and edited poses all reach them; evaluated before skinning.
-                if (const auto* sk = w.get<animation::SkinnedMeshComponent>(entity);
+                if (const auto* sk = row_of(oc.skinned, row);
                     sk && sk->skin < gm.cpu.skins.size() && !gm.cpu.skins[sk->skin].correctives.empty()) {
                     const Entity root = scene.find(sk->skeleton);
                     if (root != Entity{}) {
@@ -2222,7 +2242,7 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
                     ++stats.morphed;
                 }
             }
-            const auto* skinned = w.get<animation::SkinnedMeshComponent>(entity);
+            const auto* skinned = row_of(oc.skinned, row);
             if (!scattered && skinned && gm.max_joint[mr.mesh_index] >= 0 && skinned->skin < gm.cpu.skins.size()) {
                 const assets::ModelSkin& skin = gm.cpu.skins[skinned->skin];
                 const Entity root = scene.find(skinned->skeleton);
@@ -2264,7 +2284,13 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
             ++stats.meshes;
             return;
         }
-        const render::GpuMesh* mesh = mr.primitive.empty() ? nullptr : assets.primitive(mr.primitive);
+        // Consecutive renderers usually share a primitive: reuse the last lookup (cache entries
+        // keep their address for the whole extraction).
+        if (mr.primitive != last_primitive) {
+            last_primitive = mr.primitive;
+            last_primitive_mesh = mr.primitive.empty() ? nullptr : assets.primitive(mr.primitive);
+        }
+        const render::GpuMesh* mesh = last_primitive_mesh;
         if (!mesh) {
             ++stats.missing_assets;
             return;
@@ -2283,9 +2309,20 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
             }
         }
         m.cast_shadows = mr.cast_shadows;
-        apply_overrides(entity, m);
+        apply_row_overrides(overrides, m);
         emit(*mesh, m);
         ++stats.meshes;
+    };
+    w.each_archetype<MeshRendererComponent, WorldTransform>([&](ecs::Archetype& a) {
+        oc.foliage_runtime = a.column_data<terrain::FoliageRuntime>();
+        oc.foliage = a.column_data<terrain::FoliageComponent>();
+        oc.procedural = a.column_data<scene::ProceduralMeshComponent>();
+        oc.overrides = a.column_data<gameplay::MaterialOverridesComponent>();
+        oc.skinned = a.column_data<animation::SkinnedMeshComponent>();
+        const MeshRendererComponent* renderers = a.column_data<MeshRendererComponent>();
+        const WorldTransform* transforms = a.column_data<WorldTransform>();
+        const Entity* entities = a.entities().data();
+        for (std::size_t r = 0, n = a.size(); r < n; ++r) draw_renderer(entities[r], r, renderers[r], transforms[r]);
     });
 
     // Crowd agents (ADR-0200): whole skinned models drawn from clips baked once per (model, skin,

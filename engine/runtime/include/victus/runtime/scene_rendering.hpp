@@ -343,7 +343,12 @@ private:
     };
     std::unordered_map<CrowdKey, std::unique_ptr<CrowdClip>, CrowdKeyHash> crowd_;
     void drop_crowd(const Uuid* model); // nullptr = every bake
-    std::unordered_map<std::string, render::GpuMesh> primitives_;
+    struct StringHash {
+        using is_transparent = void;
+        std::size_t operator()(std::string_view s) const noexcept { return std::hash<std::string_view>{}(s); }
+    };
+    // Looked up by string_view without building a key string (per renderer, per frame).
+    std::unordered_map<std::string, render::GpuMesh, StringHash, std::equal_to<>> primitives_;
     std::unordered_map<Uuid, Result<render::Material>, UuidHash> materials_;
     std::unordered_map<Uuid, Result<rhi::ShaderHandle>, UuidHash> shaders_;
     std::unordered_map<Uuid, std::unique_ptr<render::SurfaceVertexStage>, UuidHash> vertex_stages_;
