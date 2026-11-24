@@ -77,6 +77,7 @@ Result<SceneViewStats> SceneView::render(rhi::CommandBuffer& cmd, Scene& scene, 
         VICTUS_TRY_STATUS(sprites_->prepare(cmd));
         VICTUS_TRY_STATUS(sprites_->render_lights(cmd, width, height));
         stats.lights_2d = sprites_->stats().lights;
+        stats.shadowed_lights_2d = sprites_->stats().shadowed_lights;
         stats.lighting_2d = sprites_->stats().lighting;
         rhi::RenderPassDesc rp;
         rhi::ColorAttachment color;

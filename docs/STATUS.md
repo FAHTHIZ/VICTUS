@@ -4073,3 +4073,22 @@ Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, lavapipe, `SDL_VIDEO_DRIV
 - Conclusion: LTO stays opt-in. The remaining CPU-plan work is structural (parallel batching, ECS change versions), not compiler flags.
 - Not verified: Clang ThinLTO, physical hardware.
 - Next task: commit 2D normal maps and shadow casters (GAP-19, ADR-0255), then parallel batching.
+
+## 2026-11-24 — 2D normal maps and shadow casters (ADR-0255)
+
+Built:
+- `Sprite::normal_map` and `SpriteComponent::normal_map_asset` (serialized as `normal_map`, editor drop target). Lit batches with a normal map write world normals into an RGBA8 normal target (`sprite_normal.vert/.frag`); `light2d.frag` applies N·L with a per-light `height`.
+- Sprite vertex stays at 20 bytes: unorm16 UVs, packed color, and one float tangent frame (angle plus pi for `flip_x`, plus 8 when one flip mirrors the bitangent).
+- `SpriteBatch::add_shadow_caster(outline, self_shadow)` and `ShadowCaster2DComponent` (empty outline uses the sprite rect). Each shadowed light renders an R8 mask of edge quads extruded to 4x its radius (`shadow2d.vert/.frag`), then a light pass scaled by `1 - shadow_strength * mask`. Casters that do not self-shadow have their fills cleared, so their tops stay lit. Non-finite and zero-area outlines are rejected; concave outlines are ear-clipped.
+- `Light2D`/`Light2DComponent`: `height`, `shadows`, `shadow_strength`. Stats: `normal_mapped_sprites`, `shadowed_lights`, `shadow_casters`, `SceneViewStats::shadowed_lights_2d`.
+- Sprite sort: a packed 128-bit key with an LSD radix sort (skips constant bytes) replaces `std::stable_sort`; order is layer, blend, lit, texture, normal map, filter, submission.
+- Tests: 2D light normal-map, shadow-caster (off, on, self-shadow, half strength, concave, zero-area), SceneView ShadowCaster2D plus serialization, and radix-sort order cases in `gpu_light2d_tests.cpp`.
+
+Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, lavapipe, `SDL_VIDEO_DRIVER=offscreen VICTUS_REQUIRE_GPU=1`):
+- `victus_gpu_tests -tc="gpu: 2d light*,gpu: tilemap*,gpu: sprite*,*text*,*2d*"`: 849 assertions passed on Vulkan and on GLES (`VICTUS_GPU_DRIVER=gles`).
+- Shadow output inspected visually: wedges behind casters, lit caster tops, dark self-shadowed casters, lit concave interior.
+- `perf_budgets` passed; `gpu.buffer_bytes` 204,800 (2D templates) and 289,336 (simulation). A 36-byte vertex failed at 270,336 > 225,281 and a 24-byte vertex failed simulation at 305,720 > 296,147.
+- `victus_bench_render --filter sprite`, `sprite_batch/build_upload_20k` p50: 1.60-1.67 ms before, 1.21/1.30/1.35 ms after.
+- Full `ctest -j2 --output-on-failure`: 50/50 passed in 1,003 s.
+- Not verified: physical GPUs, soft shadow penumbrae (masks are hard-edged).
+- Next task: tilemap camera culling (ADR-0256), then parallel batching.

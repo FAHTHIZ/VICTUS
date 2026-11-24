@@ -2996,3 +2996,36 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 **Consequences:**
 - The triangle counts are unchanged: 300,096 in the file. Only the hair card positions moved.
 - The GLB is 24.22 MB.
+
+### ADR-0255: 2D normal maps and shadow casters
+
+**Status:** Accepted (2026-11-24).
+
+**Context:** GAP-19: 2D lights (ADR-0065) lit every sprite flat and nothing blocked them. Godot's 2D lights have normal maps and occluders, and Unity's 2D renderer has normal maps and Shadow Caster 2D.
+
+**Decision:**
+- Normal maps:
+  - `Sprite::normal_map` and `SpriteComponent::normal_map_asset` (`normal_map` in scenes, a drop target in the inspector) hold a tangent-space normal map (green up, imported linear by the `_n`/`_normal` suffix rule).
+  - Sprite vertices carry the world tangent frame in one float: the tangent angle (rotation, plus pi for `flip_x`), plus 8 when exactly one flip mirrors the bitangent. UVs are packed as two unorm16 values, so the vertex stays at 20 bytes. A full vec4 frame (36 bytes) and a 24-byte vertex both put templates over their GPU buffer budgets.
+  - When a lit batch has a normal map, `render_lights()` first draws the lit batches into an RGBA8 normal buffer (`sprite_normal.vert/frag`), cleared to "no normal" (alpha 0). Texels with sprite alpha below 0.5 are discarded. Lit sprites without a map still write alpha 0, so a flat sprite on top hides the normals underneath.
+  - `light2d.frag` multiplies by N·L where the buffer's alpha is 1, with L towards a light `height` above the sprite plane (`Light2D::height`, `Light2DComponent::height`, scaled like the radius). Flat sprites render exactly as before.
+- Shadows:
+  - `SpriteBatch::add_shadow_caster(outline, self_shadow)` takes a simple polygon in world space. Points that are not finite and zero-area outlines are rejected. The outline is stored counter-clockwise and, unless `self_shadow`, ear-clipped once.
+  - Each visible light with `shadows` (and `shadow_strength` > 0) gets an R8 mask. Every edge of every caster whose bounds touch the light is extruded on the CPU away from the light to 4× its radius and drawn as 1. The union of these quads is the caster plus everything behind it. The interiors of casters that do not self-shadow are then drawn as 0.
+  - The light is drawn on top of the accumulated light target and multiplied by `1 - strength * mask`.
+  - Unshadowed lights still share one pass. A shadowed light with no casters in reach is drawn as an ordinary light.
+  - `gameplay::ShadowCaster2DComponent` holds a local outline (empty = the Sprite rectangle, or a unit square), `self_shadow` and `enabled`. `extract_lights_2d` gathers casters only when an enabled light uses shadows.
+  - `Light2DComponent` gains `shadows` and `shadow_strength`.
+- Stats: `SpriteBatchStats::normal_mapped_sprites`, `shadowed_lights` and `shadow_casters`, and `SceneView` `shadowed_lights_2d`.
+
+**Alternatives:**
+- A 1D polar shadow map per light (Godot's approach) gives soft-edge filtering and scales to many casters per light, but needs a polar render target and a per-light resolution choice. Edge extrusion is exact, works on GLES 3.0 unchanged and costs only vertices for the small caster counts of 2D scenes.
+- Stencil volumes would avoid the mask texture, but the RHI has no stencil-only passes on the GLES path.
+
+**Evidence:** the STATUS.md entry for the commit and `gpu: 2d light*` 8/8 on Vulkan and GLES.
+
+**Consequences:**
+- Each shadowed light costs two extra render passes (mask, then the light). Lights without shadows cost nothing extra.
+- Shadow edges are hard, aliased at one pixel.
+- A caster's lit interior also hides shadows cast onto it by other casters. Use `self_shadow` where that matters.
+- The normal buffer costs one RGBA8 target at the frame size, and only in frames that have normal-mapped lit sprites.

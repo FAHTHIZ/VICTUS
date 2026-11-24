@@ -154,6 +154,8 @@ struct SpriteComponent {
     math::Vec4 uv{0, 0, 1, 1};
     // Ignores 2D lights (UI-like signs, glowing pickups). Only matters while the scene has a Light2D.
     bool unlit{false};
+    // Tangent-space normal map (green up) shaded by 2D lights (ADR-0255). Nil = flat.
+    Uuid normal_map_asset;
 };
 // Components present in a scene file whose type is not registered in this build are kept
 // verbatim so saving never destroys data authored with plugins or newer engine versions.

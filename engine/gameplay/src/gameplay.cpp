@@ -282,7 +282,16 @@ void register_components() {
             .field(&L2::inner_angle_degrees, "inner_angle_degrees", {.min = 0, .max = 180, .speed = 0.5f, .label = "Inner Angle", .tooltip = "Spot: full light inside this half-angle", .hint = "degrees"})
             .field(&L2::outer_angle_degrees, "outer_angle_degrees", {.min = 0.1f, .max = 180, .speed = 0.5f, .label = "Outer Angle", .tooltip = "Spot: no light beyond this half-angle (spots shine along local -Y)", .hint = "degrees"})
             .field(&L2::falloff, "falloff", {.min = 0.05f, .max = 16, .speed = 0.01f, .tooltip = "Below 1 spreads light further, above 1 concentrates it at the centre"})
+            .field(&L2::height, "height", {.min = 0.001f, .max = 1000, .speed = 0.01f, .tooltip = "Height above the sprites: lower values light normal-mapped sprites at grazing angles"})
+            .field(&L2::shadows, "shadows", {.tooltip = "ShadowCaster2D outlines block this light"})
+            .field(&L2::shadow_strength, "shadow_strength", {.min = 0, .max = 1, .speed = 0.01f, .tooltip = "How dark the shadows are (1 = no light)"})
             .field(&L2::enabled, "enabled")
+            .commit();
+        using SC = ShadowCaster2DComponent;
+        scene::Schema<SC>("ShadowCaster2D", "Rendering")
+            .field(&SC::outline, "outline", {.tooltip = "Local XY polygon; empty uses the Sprite rectangle"})
+            .field(&SC::self_shadow, "self_shadow", {.tooltip = "The caster darkens itself instead of staying lit"})
+            .field(&SC::enabled, "enabled")
             .commit();
         using D = DecalComponent;
         scene::Schema<D>("Decal", "Rendering")

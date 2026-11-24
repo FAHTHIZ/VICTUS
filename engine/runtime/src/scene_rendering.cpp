@@ -2539,11 +2539,47 @@ std::uint32_t extract_lights_2d(Scene& scene, render::SpriteBatch& batch) {
         out.outer_angle = math::radians(outer);
         out.inner_angle = math::radians(std::isfinite(l.inner_angle_degrees) ? std::clamp(l.inner_angle_degrees, 0.0f, outer) : outer);
         out.falloff = l.falloff;
+        out.height = l.height * (scale > 0.0f ? scale : 1.0f);
+        out.shadows = l.shadows;
+        out.shadow_strength = l.shadow_strength;
         lights.push_back(out);
     });
     if (!any) return 0;
     batch.set_lighting(ambient);
-    for (const auto& l : lights) batch.add_light(l);
+    bool shadowed = false;
+    for (const auto& l : lights) {
+        batch.add_light(l);
+        shadowed |= l.shadows;
+    }
+    // Shadow casters (ADR-0255): only gathered when a light uses them. Outlines are local XY
+    // polygons through the full transform; empty outlines take the Sprite rectangle.
+    if (shadowed) {
+        std::vector<math::Vec2> pts;
+        scene.world().each<gameplay::ShadowCaster2DComponent, WorldTransform>(
+            [&](Entity e, const gameplay::ShadowCaster2DComponent& c, const WorldTransform& wt) {
+                if (!c.enabled) return;
+                pts.clear();
+                const auto add = [&](math::Vec2 q) {
+                    const math::Vec3 w = wt.matrix.transform_point({q.x, q.y, 0});
+                    pts.push_back({w.x, w.y});
+                };
+                if (c.outline.size() >= 3) {
+                    for (const math::Vec2 q : c.outline) add(q);
+                } else {
+                    math::Vec2 size{1, 1}, pivot{0.5f, 0.5f};
+                    if (const auto* sp = scene.world().get<SpriteComponent>(e)) {
+                        size = sp->size;
+                        pivot = sp->pivot;
+                    }
+                    const math::Vec2 lo{-pivot.x * size.x, -pivot.y * size.y};
+                    add(lo);
+                    add({lo.x + size.x, lo.y});
+                    add({lo.x + size.x, lo.y + size.y});
+                    add({lo.x, lo.y + size.y});
+                }
+                batch.add_shadow_caster(pts, c.self_shadow);
+            });
+    }
     return static_cast<std::uint32_t>(lights.size());
 }
 
@@ -2558,6 +2594,10 @@ std::uint32_t extract_sprites(Scene& scene, GpuAssetCache& assets, render::Sprit
             if (tex) sp.texture = *tex;
             else if (tex.error().code == ErrorCode::Pending) return; // a white quad would flash
             sp.nearest = assets.texture_nearest(s.texture_asset);
+        }
+        if (!s.normal_map_asset.is_nil() && !s.unlit) {
+            auto nmap = assets.texture(s.normal_map_asset); // pending: drawn flat until it arrives
+            if (nmap) sp.normal_map = *nmap;
         }
         math::Vec3 pos, scale;
         math::Quat rot;

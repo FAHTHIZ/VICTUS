@@ -1670,6 +1670,28 @@ bool Editor::inspect_components(Entity e) {
                 changed = true;
             }
         }
+        ImGui::Text("Normal Map: %s", asset_label(db_.get(), sp->normal_map_asset).c_str());
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tangent-space normal map (green up) shaded by 2D lights");
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload(kAssetPayload)) {
+                Uuid id;
+                std::memcpy(&id, p->Data, sizeof(Uuid));
+                if (const auto* rec = db_->find(id); rec && rec->kind == assets::AssetKind::Texture) {
+                    sp->normal_map_asset = id;
+                    changed = true;
+                }
+            }
+            ImGui::EndDragDropTarget();
+        }
+        if (!sp->normal_map_asset.is_nil()) {
+            ImGui::SameLine();
+            ImGui::PushID("normal_map");
+            if (ImGui::SmallButton("Clear")) {
+                sp->normal_map_asset = {};
+                changed = true;
+            }
+            ImGui::PopID();
+        }
         changed |= vec2_edit("Size", sp->size);
         changed |= vec2_edit("Pivot", sp->pivot, 0.01f);
         changed |= color_edit("Tint", sp->tint);

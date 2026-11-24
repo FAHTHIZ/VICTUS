@@ -90,7 +90,7 @@ Status: **open** · **partly** (some of it exists) · **blocked** (needs hardwar
 | GAP-16 | **Water: no scene reflections, no FFT ocean** | SSR/planar in all three; Unity adds SSR to mobile-first URP in 6.7 LTS ([UNITY_UNREAL_2026_11](UNITY_UNREAL_2026_11.md)) | Screen-space reflections on water on Medium/High/Ultra, environment fallback (ADR-0196) | S2 (raised 2026-11-22) | partial | SSR for opaque glossy surfaces; planar reflections option; FFT ocean |
 | GAP-17 | **Custom shaders limited**: four parameters, no custom textures | Shader Graph, UE materials, Godot shaders (vertex+fragment) | `.vshader` `surface()` per pixel and `vertex()` in forward and shadow passes (ADR-0170); named parameters with hints and up to four custom textures in both stages (ADR-0171) | S2 | partial | More than four parameter slots; vertex functions in prepass/motion vectors; bounds growth |
 | GAP-18 | **No virtualised geometry** | Nanite | Missing | S4 for phones | open | Not pursued for entry phones; HLOD + impostors (GAP-11) is the phone answer |
-| GAP-19 | **2D: no shadows or normal maps; tiles not camera-culled** | Godot 2D lights with normal maps and shadows | Missing | S3 | open | As ROADMAP |
+| GAP-19 | **2D: tiles not camera-culled** (normal maps and shadow casters done, ADR-0255) | Godot 2D lights with normal maps and shadows | Partial | S3 | open | As ROADMAP |
 
 ### D. Large worlds and procedural content
 

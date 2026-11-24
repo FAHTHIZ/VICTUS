@@ -277,6 +277,7 @@ SerializerRegistry::SerializerRegistry() {
             v.set("flip_x", s.flip_x);
             v.set("flip_y", s.flip_y);
             if (s.unlit) v.set("unlit", true);
+            if (!s.normal_map_asset.is_nil()) v.set("normal_map", uuid_value(s.normal_map_asset));
             if (!(s.uv.x == 0 && s.uv.y == 0 && s.uv.z == 1 && s.uv.w == 1)) {
                 Value uv = Value::array();
                 for (const float c : {s.uv.x, s.uv.y, s.uv.z, s.uv.w}) uv.push(c);
@@ -286,6 +287,7 @@ SerializerRegistry::SerializerRegistry() {
         },
         [](SpriteComponent& s, const Value& v) -> Status {
             if (!read_uuid(v["texture"], s.texture_asset)) return bad("Sprite.texture");
+            if (!read_uuid(v["normal_map"], s.normal_map_asset)) return bad("Sprite.normal_map");
             if (const Value* p = v.find("size"); p && !from_json(*p, s.size)) return bad("Sprite.size");
             if (const Value* p = v.find("tint"); p && !from_json(*p, s.tint)) return bad("Sprite.tint");
             if (const Value* p = v.find("pivot"); p && !from_json(*p, s.pivot)) return bad("Sprite.pivot");

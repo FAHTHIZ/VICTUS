@@ -10,6 +10,7 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 
 ### Added
 
+- 2D normal maps and shadows (ADR-0255): lit sprites can take a normal map that 2D lights shade by angle and `height`, and a `ShadowCaster2D` component (an outline, or the sprite's rectangle) blocks 2D lights that have Shadows on. ([evidence](docs/STATUS.md#2026-11-24--2d-normal-maps-and-shadow-casters-adr-0255))
 - Nova closer to the sheet's close-ups (ADR-0254): her pearl plates break up into the black hardware at their edges, the knees are black and mechanical, the corset is tailored, the boots carry black panels, and her bob is tucked behind the ears. ([evidence](docs/STATUS.md#2026-11-24--nova-sheet-close-up-pass-adr-0254))
 - Nova's suit and face carry the sheet's fine detail (ADR-0253): dense black cybernetic hardware under satin pearl plates, black edges biting into the plates, a hex-scale seat and corset, and softer skin with eye liner and blush. ([evidence](docs/STATUS.md#2026-11-24--nova-cybernetic-detail-satin-plates-and-skin-adr-0253))
 - Nova reworked to match the owner's character sheet one-to-one (ADR-0252). She now has:
@@ -140,6 +141,7 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 
 ### Changed
 
+- Sprite batches sort by a packed key with a radix sort instead of `std::stable_sort`, while the vertex stays at 20 bytes. Building and uploading 20,000 sprites takes about 1.2-1.35 ms instead of 1.6 ms (ADR-0255). ([evidence](docs/STATUS.md#2026-11-24--2d-normal-maps-and-shadow-casters-adr-0255))
 - New opt-in `VICTUS_LTO` CMake option and `release-lto` preset for link-time optimisation of the engine's own targets. It is off by default because it measured no faster on the runtime frame benchmark. ([evidence](docs/STATUS.md#2026-11-24--iplto-release-build-measured))
 - Faster scene extraction for large static scenes (ADR-0230 follow-up): mesh renderers are walked per archetype with optional components read from columns, primitive lookups no longer build strings, and retained records are found through a direct-mapped hint. The 10,000-cube benchmark spends about 0.68 ms in extraction instead of 0.93 ms. ([evidence](docs/STATUS.md#2026-11-24--cheaper-extraction-for-unchanged-renderers-adr-0230-follow-up))
 - Nova's bare-head bob now frames the face down to the jaw, with a lower side-swept choppy fringe and a tighter, glossier highlight (ADR-0247). ([evidence](docs/STATUS.md#2026-11-24--novas-bob-jaw-length-face-framing-swept-fringe-and-sharper-sheen-adr-0247-follow-up))

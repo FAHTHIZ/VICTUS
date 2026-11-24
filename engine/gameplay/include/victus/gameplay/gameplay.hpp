@@ -448,6 +448,18 @@ struct Light2DComponent {
     float inner_angle_degrees{25.0f}; // spot half-angles: full light inside inner,
     float outer_angle_degrees{40.0f}; // none beyond outer
     float falloff{1.0f};              // < 1 broader, > 1 tighter
+    float height{1.0f};               // above the sprite plane: shading of normal-mapped sprites (ADR-0255)
+    bool shadows{false};              // ShadowCaster2D outlines block this light
+    float shadow_strength{1.0f};      // 0 = no darkening, 1 = black in shadow
+    bool enabled{true};
+};
+
+// Blocks 2D lights that have `shadows` on (ADR-0255). The outline is a simple polygon in the
+// entity's local XY plane; empty = the entity's Sprite rectangle (its size and pivot), or a unit
+// square without a sprite. The caster's own area stays lit unless `self_shadow`.
+struct ShadowCaster2DComponent {
+    std::vector<math::Vec2> outline;
+    bool self_shadow{false};
     bool enabled{true};
 };
 
