@@ -58,7 +58,7 @@ def card_maps(s, t, tile, layer, hs, seed):
     inner = (tile >= human.TILES // 2).astype(float) * 0.8
     del layer
     col = np.array(hs.hair)[None, :] * (tone * (0.75 + 0.35 * t) * (1 - 0.35 * inner))[:, None]
-    rough = hs.hair_rough + 0.12 * (1 - np.clip(h / 0.00004, 0, 1)) + 0.05 * inner
+    rough = hs.hair_rough + 0.06 * (1 - np.clip(h / 0.00004, 0, 1)) + 0.05 * inner
     cavity = (1 - 0.35 * inner) * (0.7 + 0.3 * _smooth(t / 0.25))
     return {"color": col, "rough": rough, "metal": np.zeros(n), "height": h, "alpha": alpha, "cavity": cavity}
 
@@ -98,6 +98,27 @@ def maps(name, tx, P, N, L, hs, attrs, face_attrs, fa, seed):
             shell = np.rint(attrs["kind"][g, 0]) == 0
             sub["rough"] = np.where(shell, np.clip(sub["rough"] - (0.72 - hs.hair_rough), 0.05, 1), sub["rough"])
             _put(out, g, sub)
+            if hs.hair_style == "bob":
+                # ADR-0254: with the bob tucked behind the ears, the scalp shell around each ear
+                # shows; paint it as dense, sleek hair combed back over the ear.
+                em_ = 0.5 * (L.eL + L.eR)
+                hc = em_ + np.array([0.0, 0.078, 0.004])
+                rel = P - hc
+                az = np.degrees(np.abs(np.arctan2(rel[:, 0], -rel[:, 1])))
+                zone = (_smooth((az - 55) / 10) * _smooth((150 - az) / 10) * _smooth((rel[:, 2] + 0.06) / 0.02)
+                        * _smooth((0.075 - rel[:, 2]) / 0.03))
+                shellm = np.zeros(n, bool)
+                shellm[np.where(g)[0]] = shell
+                zone = zone * shellm
+                if zone.any():
+                    # Strands combed back and down over the ear: stripes across that direction.
+                    ph = (rel[:, 2] * 0.6 + np.abs(rel[:, 0]) * 0.0 + rel[:, 1] * 0.8) / 0.0009
+                    strand = 0.5 + 0.5 * np.sin(ph + 3 * np.sin(rel[:, 2] / 0.004))
+                    hcol = np.array(hs.hair)[None, :] * (0.7 + 0.6 * strand[:, None])
+                    out["color"] = out["color"] * (1 - zone[:, None]) + hcol * zone[:, None]
+                    out["alpha"] = np.maximum(out["alpha"], zone)
+                    out["rough"] = out["rough"] * (1 - zone) + (hs.hair_rough + 0.06) * zone
+                    out["height"] = out["height"] * (1 - zone) + strand * 0.00003 * zone
         c = kind == 3
         if c.any():
             tile = face_attrs["tile"][fa][c]

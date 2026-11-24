@@ -61,9 +61,9 @@ HEAD_STYLES = {
                        hair_rough=0.62),
     # Nova (the sheet's head close-up): fair East Asian skin, dark brown eyes, glossy black bob.
     # (ADR-0252: paler porcelain skin and rosier lips, after the close-up.)
-    "nova": HeadStyle(skin=(0.43, 0.275, 0.195), lips=(0.38, 0.15, 0.14), iris=(0.040, 0.022, 0.012),
+    "nova": HeadStyle(skin=(0.46, 0.315, 0.245), lips=(0.38, 0.15, 0.14), iris=(0.040, 0.022, 0.012),
                       hair=(0.0085, 0.0085, 0.0100), hair_style="bob", stubble=0.0, freckles=0.0, brow_thickness=0.90,
-                      hair_rough=0.56, hair_anisotropy=0.75, lip_size=0.80, makeup=1.0),
+                      hair_rough=0.40, hair_anisotropy=0.88, lip_size=0.80, makeup=1.0),
 }
 
 # Card tiles: the top CARD_REGION of the Hair atlas holds TILES strand tiles stacked in v.
@@ -155,6 +155,18 @@ class NovaSculpt:
         # Jaw: narrow the lower face toward the chin (a soft V).
         below = _smooth((mz + 0.012 - v[:, 2]) / 0.05) * (v[:, 2] > self.chin_z - 0.06)
         d[:, 0] -= v[:, 0] * (0.09 * below * front)
+        # ADR-0254 (the sheet's close-up): slimmer lower cheeks under a defined cheekbone, the
+        # outer eye corners lifted a little, and a small forward chin point.
+        ax_ = np.abs(v[:, 0])
+        cheek = (_smooth((ax_ - 0.020) / 0.020) * np.exp(-((v[:, 2] - (mz + 0.020)) / 0.022) ** 2) * front)
+        d[:, 0] -= np.sign(v[:, 0]) * 0.0035 * cheek
+        bone = _smooth((ax_ - 0.030) / 0.015) * np.exp(-((v[:, 2] - (self.eye_z - 0.022)) / 0.010) ** 2) * front
+        d[:, 0] += np.sign(v[:, 0]) * 0.0012 * bone
+        for e in self.eyes:
+            oc = np.exp(-(((v[:, 0] - e[0] * 1.45) / 0.010) ** 2 + ((v[:, 2] - e[2]) / 0.010) ** 2)) * front
+            d[:, 2] += 0.0016 * oc
+        chin = np.exp(-((v[:, 0] / 0.012) ** 2 + ((v[:, 2] - self.chin_z - 0.008) / 0.012) ** 2)) * front
+        d[:, 1] -= 0.0018 * chin
         # Nose (ADR-0252): a higher, finer bridge between the eyes and down the dorsum, and a
         # slightly narrower tip.
         ny = self.nose_y
@@ -247,7 +259,8 @@ def bob_strands(env: Envelope, J, chin_z, seed=3):
     eye = 0.5 * (J["Eye.L"][0] + J["Eye.R"][0])
     ez = eye[2]
     pole = _unit([0.0, 0.32, 1.0])  # the crown whorl, a little behind the top of the head
-    ear_top = ez + 0.010
+    # The ear spans azimuth ~70-100 degrees and rises ~2 cm above the eye line (MakeHuman head).
+    ear_top = ez + 0.024
     # Closer to the scalp than a helmet-like bowl (the sheet's bob is soft and sleek on top).
     # ADR-0252: fuller at the crown and the back (the sheet's rounded bob), and denser.
     layers = ((0.0150, 168, 0.005, 0.0115), (0.0110, 132, 0.30, 0.0110), (0.0068, 100, 0.55, 0.0105))
@@ -334,12 +347,11 @@ def bob_strands(env: Envelope, J, chin_z, seed=3):
                 # Hang straight down from the widest point, sweeping behind the ear on the sides.
                 zs = np.linspace(M[k, 2], zc, max(4, int((M[k, 2] - zc) / 0.004)))[1:]
                 for z in zs:
-                    s = _smooth((ear_top + 0.026 - z) / 0.026)
+                    s = _smooth((ear_top + 0.045 - z) / 0.045)
                     ae = abs(a)
                     # Face-framing pieces fall in front of the ear; behind them the hair tucks.
-                    if np.radians(82) < ae < np.radians(130):
-                        tuck = np.radians(118) + (ae - np.radians(82)) / np.radians(48) * np.radians(12)
-                        ae = ae + (tuck - ae) * s
+                    # ADR-0254 (the sheet's three-quarter view): the hair is tucked behind the ear,
+                    # which shows; only the locks in front of it frame the cheek.
                     aa = np.sign(a) * ae
                     # Taper in toward the chin: the bob hugs the jaw rather than flaring.
                     fall = (M[k, 2] - z) / max(M[k, 2] - zc, 1e-6)
@@ -348,6 +360,22 @@ def bob_strands(env: Envelope, J, chin_z, seed=3):
                     p[2] = z
                     pts.append(p)
             pts = np.array(pts)
+            # ADR-0254 (the sheet's three-quarter view): around the ear the hair is tucked behind
+            # it, so the ear shows; only the locks in front of it frame the cheek. Applied to the
+            # whole path (the skull's widest point is at ear height, so the crown meridians reach
+            # it too), rotating each point about the head axis.
+            ae_ = abs(a)
+            if np.radians(56) < ae_ < np.radians(132):
+                tgt = min(ae_, np.radians(62)) if ae_ < np.radians(66) else \
+                    np.radians(100) + (ae_ - np.radians(66)) / np.radians(66) * np.radians(32)
+                rel_ = pts - c
+                s_ = _smooth((ear_top + 0.012 - pts[:, 2]) / 0.024)
+                ang = np.sign(a) * (tgt - ae_) * s_  # rotation about the vertical head axis
+                ca, sa_ = np.cos(ang), np.sin(ang)
+                # Azimuth phi = atan2(x, -y); rotating by +ang maps (x, y) as below.
+                x_ = rel_[:, 0] * ca - rel_[:, 1] * sa_
+                y_ = rel_[:, 0] * sa_ + rel_[:, 1] * ca
+                pts = np.stack([c[0] + x_, c[1] + y_, pts[:, 2]], 1)
             pts = pts[pts[:, 2] >= zc - 1e-6] if (pts[:, 2] < zc).any() else pts
             if len(pts) < 4:
                 continue
