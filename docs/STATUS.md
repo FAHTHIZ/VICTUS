@@ -3985,3 +3985,30 @@ Verified (Release, lavapipe, Xvfb):
 - `clang-tidy` on scene_renderer.cpp and gpu_lod_tests.cpp: only the expected unknown `-Wshadow=local` flag.
 - Full `ctest -j2 --output-on-failure` with `VICTUS_REQUIRE_GPU=1`: 49 of 50 passed in 1,060 s (victus_gpu_tests 515 s, victus_editor_tests 546 s, victus_perf_budgets 113 s). The one failure was `victus_docs_lint`, which requires this ADR in CHANGELOG.md; it passes with the entry below. Perf frame p95 in ms: sample-arena 254, dungeon_crawler 6.2, platformer 11.7, template-2d 14.3, template-3d 284, multiplayer 266 and simulation 81, all within budget.
 - Next task: 2D shadows and normal maps (GAP-19).
+
+## 2026-11-24 — Nova sheet-fidelity pass (ADR-0252)
+
+Built:
+- Body (`fit.py`): a `Spec.curves` sculpt gives Nova the sheet's hourglass figure: fuller, lifted bust, narrower waist, wider hips, fuller glutes and thighs.
+- Armour (`plates.py`, `mannequin_materials.py`):
+  - one mirrored pearl bust plate with a black V and small "NOVA" lettering;
+  - a black corset to a point at the crotch, between narrow white hip bands;
+  - black undersuit above the leg line, with shoulder straps and a black seat;
+  - a graphite vertebra column, white bicep sleeves, black segmented forearm inserts, and white kneecaps in black knee frames;
+  - pearl silver-white palette.
+- Head (`human.py`, `materials.py`):
+  - porcelain skin, larger eyes with opened lids, softer and fuller rosy lips, and a finer nose bridge;
+  - a three-layer glossy bob with a side part, crown volume, a graduated nape and a long fringe swept to her right;
+  - the scalp shell's hairline is cut clean so the swept fringe shows no stipple.
+- `mannequin.Head`: the occupancy volume clears a 3-voxel border and keeps only the component connected to the centre. This removes a mis-signed pocket behind Nova's right ear that grew a fin of hair cards.
+
+Verified:
+- Full-quality Nova build: 22.36 MB and 300,096 triangles in 613 s.
+  - Drawn with the helmet: 170,160 triangles. Drawn bare-headed: 257,824. Both are within the 140k–260k budget in `template_character_tests.cpp`.
+  - 60 joints, 26 blend shapes, 41 clips.
+  - The arena copy was updated.
+- `tools/characters/test_pipeline.py`: 14/14 passed.
+- `docs/images/characters/blender_render_{bodies,heads}.jpg`: the Nova tiles were regenerated.
+- The C++ suites were not run in this pass.
+- The `mannequin.Head` fix only removes detached pockets. Orion's GLB was not rebuilt and is confirmed in the Orion pass.
+- Next task: Orion from the same sheet.

@@ -2913,3 +2913,39 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 - While a cluster fades, all of its copies are drawn twice, at both levels, for `lod_fade_frames` frames. Hysteresis keeps switches rare.
 - A fading cluster loses early-Z for those frames, and breaks a merged run of clusters into separate draws.
 - Group statistics now include `lod_held` and `lod_fading`.
+
+### ADR-0252: Nova sheet-fidelity pass
+
+**Status:** Accepted (2026-11-24).
+
+**Context:** The owner asked for Nova to be a one-to-one replica of the ORION & NOVA character sheet. ADR-0247's Nova was too far from it:
+- a slender straight figure, mostly white armour on the torso and a bust plate split by a lit seam;
+- a small-eyed face with thin lips;
+- a bob that grew a fin of cards behind her right ear.
+
+**Decision:**
+- Body: a `Spec.curves` sculpt in `fit.py` with smooth bands for bust (and lift), waist, hips, glutes and thighs. It runs before the head pass and is used only by Nova.
+- Torso and limbs (`plates.py`, `mannequin_materials.py`):
+  - one mirrored bust plate;
+  - a graphite corset to the crotch;
+  - narrow pearl hip bands;
+  - a vertebra column;
+  - the black undersuit above a leg line, with straps and a black seat;
+  - white bicep sleeves;
+  - segmented black forearm inserts;
+  - white kneecaps;
+  - a painted stroke-font "NOVA" under the V;
+  - a pearl palette.
+- Head (`human.py`): a skin, eye, lid and lip sculpt, and the bob re-cut into three layers with a side part and a long swept fringe. The bob's scalp shell has a clean hairline (`materials.py`).
+- `mannequin.Head` keeps only the occupancy component connected to the centre, inside a cleared border.
+
+**Alternatives:**
+- Hand-sculpting Nova in Blender: the pipeline is procedural and reproducible from CC0 sources, and a hand-made mesh would break that.
+- A separate Nova base mesh: the shared MakeHuman topology keeps the skeleton, blend shapes and clips identical to Orion's.
+
+**Evidence:** the STATUS.md entry for the commit, `test_pipeline.py` 14/14, and the regenerated review renders.
+
+**Consequences:**
+- Nova's file grows from 282,208 to 300,096 triangles. Drawn bare-headed she uses 257,824, near the 260k ceiling, so later head detail needs to save triangles elsewhere.
+- GLB size grows from 21.60 MB to 22.36 MB.
+- The `mannequin.Head` fix also applies to Orion's helmet hull. It is to be confirmed in his rebuild.

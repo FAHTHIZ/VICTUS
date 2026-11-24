@@ -10,6 +10,12 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 
 ### Added
 
+- Nova reworked to match the owner's character sheet one-to-one (ADR-0252). She now has:
+  - an hourglass figure in pearl silver-white armour over a black undersuit;
+  - a bust plate with a black V and "NOVA" lettering, a black corset between narrow hip bands, and a black spine;
+  - segmented forearm inserts and white kneecaps;
+  - a porcelain face with larger eyes and fuller lips, and a glossy black bob with a long side-swept fringe.
+  ([evidence](docs/STATUS.md#2026-11-24--nova-sheet-fidelity-pass-adr-0252))
 - Scattered foliage and other instance groups now fade between LOD levels instead of popping, and no longer flicker at a switch distance (ADR-0251). ([evidence](docs/STATUS.md#2026-11-24--lod-cross-fade-for-retained-group-clusters-adr-0251))
 - Screen-space reflections on Medium (ADR-0250): glossy floors, wet streets and polished metal now reflect the scene without TAA, from a half-resolution capture of last frame. Edges are slightly softer than on High. ([evidence](docs/STATUS.md#2026-11-24--screen-space-reflections-without-taa-adr-0250))
 - Rectangle area lights now light clear-coat and sheen materials (ADR-0248): lacquered paint shows a sharp reflection of the panel and velvet gains its soft rim. Very glossy surfaces also show the full size of sphere bulbs and panels instead of a dim dot. ([evidence](docs/STATUS.md#2026-11-24--clear-coat-and-sheen-under-area-lights-adr-0248))
