@@ -106,6 +106,9 @@ class Spec:
     leg_scale: float = 1.0
     # The sheet's slim neck column: the neck is narrowed radially by this factor.
     neck_scale: float = 1.0
+    # The sheet's figure (ADR-0252): bust, waist, hip, glute and thigh shaping applied in
+    # MakeHuman space before the rest pose (see `curves`); empty keeps the macro body.
+    curves: dict = field(default_factory=dict)
 
 
 ORION = Spec("orion", "Orion", mh.Macro(gender=1.0, muscle=0.92, weight=0.46, african=0.55, asian=0.10, caucasian=0.35),
@@ -113,7 +116,8 @@ ORION = Spec("orion", "Orion", mh.Macro(gender=1.0, muscle=0.92, weight=0.46, af
              leg_scale=1.04, neck_scale=0.86)
 NOVA = Spec("nova", "Nova", mh.Macro(gender=0.0, muscle=0.52, weight=0.15, african=0.0, asian=0.85, caucasian=0.15),
             skull_top=1.695, profile="VictusHumanoid.Nova", head_scale=0.88, leg_scale=1.09,
-            neck_scale=0.84)
+            neck_scale=0.84,
+            curves={"bust": 1.34, "bust_lift": 0.10, "waist": 0.86, "hips": 1.10, "glutes": 1.22, "thighs": 1.07})
 SPECS = {"orion": ORION, "nova": NOVA}
 
 
@@ -294,10 +298,83 @@ def long_legs(v0, rig: mh.MhRig, k):
     return out
 
 
+def _smooth(t):
+    t = np.clip(t, 0.0, 1.0)
+    return t * t * (3 - 2 * t)
+
+
+def _band(y, y0, y1, y2, y3):
+    """1 between y1 and y2, easing to 0 at y0 and y3."""
+    return _smooth((y - y0) / max(y1 - y0, 1e-6)) * (1.0 - _smooth((y - y2) / max(y3 - y2, 1e-6)))
+
+
+def curves(v0, rig: mh.MhRig, c: dict):
+    """The sheet's hourglass figure (ADR-0252), in MakeHuman space (Y up, +Z forward, +X the
+    character's left, decimetres): a fuller, lifted bust (the breast bones' reference weights),
+    a cinched waist, wider hips, rounder glutes and fuller upper thighs. Each term is a smooth
+    radial or axial scale confined to its band of the torso, so the deformation stays seamless
+    and the arms (outside the torso radius) are untouched."""
+    if not c:
+        return v0
+    v = v0.copy()
+    x, y, z = v0[:, 0], v0[:, 1], v0[:, 2]
+    ax = np.abs(x)
+    torso = 1.0 - _smooth((ax - 1.85) / 0.3)  # the arms hang outside |x| 2.15 below the chest
+    yh = rig.head_tail(v0, "upperleg01.L")[0][1]  # hip joints
+    yc = rig.head_tail(v0, "spine02")[0][1]  # lower chest
+    # Bust: scale each breast about a point inside the rib cage, then lift it.
+    k = c.get("bust", 1.0)
+    if abs(k - 1.0) > 1e-6:
+        for t in ("L", "R"):
+            vi, wt = rig.weights[f"breast.{t}"]
+            w = np.zeros(len(v0))
+            np.add.at(w, vi, wt)
+            w = np.clip(w * 1.6, 0, 1) * (z > 0.2)
+            root, tip = rig.head_tail(v0, f"breast.{t}")
+            piv = root + (tip - root) * 0.45
+            f = 1.0 + (k - 1.0) * w
+            v += (v0 - piv) * (f - 1.0)[:, None]
+            v[:, 1] += c.get("bust_lift", 0.0) * w
+    # Waist: a radial cinch about the spine between the hips and the ribs, strongest a little
+    # above the navel; the front-back depth narrows less than the width.
+    k = c.get("waist", 1.0)
+    if abs(k - 1.0) > 1e-6:
+        w = _band(y, yh + 0.35, yh + 1.25, yh + 1.65, yc + 0.55) * torso
+        cz = np.interp(y, [yh, yc], [0.15, 0.05])
+        v[:, 0] += x * (k - 1.0) * w
+        v[:, 2] += (z - cz) * (k - 1.0) * 0.55 * w
+    # Hips: a lateral swell over the pelvis and the top of the thighs.
+    k = c.get("hips", 1.0)
+    if abs(k - 1.0) > 1e-6:
+        w = _band(y, yh - 1.6, yh - 0.55, yh + 0.1, yh + 0.95) * torso * _smooth((ax - 0.15) / 0.6)
+        v[:, 0] += x * (k - 1.0) * w
+    # Glutes: the back of the pelvis pushed out and rounded under.
+    k = c.get("glutes", 1.0)
+    if abs(k - 1.0) > 1e-6:
+        w = _band(y, yh - 1.25, yh - 0.6, yh + 0.05, yh + 0.85) * _smooth((0.25 - z) / 0.9) * (1.0 - _smooth((ax - 1.85) / 0.3))
+        w *= _smooth((ax - 0.02) / 0.25)
+        v[:, 2] += (z - 0.25) * (k - 1.0) * w
+        v[:, 1] += 0.25 * (k - 1.0) * w  # lifted, not dropped
+    # Upper thighs: radial fullness about each thigh bone, fading out toward the knee.
+    k = c.get("thighs", 1.0)
+    if abs(k - 1.0) > 1e-6:
+        for t in ("L", "R"):
+            a = rig.head_tail(v0, f"upperleg01.{t}")[0]
+            b = rig.head_tail(v0, f"lowerleg01.{t}")[0]
+            d = b - a
+            u = np.clip(((v0 - a) @ d) / (d @ d), 0, 1)
+            c_ = a + u[:, None] * d
+            side = (x > 0.05) if t == "L" else (x < -0.05)
+            w = side * _band(u, -0.2, 0.05, 0.45, 1.0) * (y < yh + 0.3) * torso
+            v += (v0 - c_) * ((k - 1.0) * w)[:, None]
+    return v
+
+
 def build(spec: Spec) -> Body:
     obj = mh.load_obj("base.obj")
     v0 = obj.v + mh.macro_offsets(spec.macro, len(obj.v))
     rig = mh.load_rig()
+    v0 = curves(v0, rig, spec.curves)
     v0 = heroic_head(v0, rig, spec.head_scale)
     v0 = long_legs(v0, rig, spec.leg_scale)
     v0 = slim_neck(v0, rig, spec.neck_scale)
