@@ -2949,3 +2949,23 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 - Nova's file grows from 282,208 to 300,096 triangles. Drawn bare-headed she uses 257,824, near the 260k ceiling, so later head detail needs to save triangles elsewhere.
 - GLB size grows from 21.60 MB to 22.36 MB.
 - The `mannequin.Head` fix also applies to Orion's helmet hull. It is to be confirmed in his rebuild.
+
+### ADR-0253: Nova cybernetic detail, satin plates and skin
+
+**Status:** Accepted (2026-11-24).
+
+**Context:** The owner said ADR-0252's Nova still lacked the sheet's density: the black under-layer had no machined hardware, the plates looked like glossy plastic and so did the skin.
+
+**Decision:**
+- A new `techdetail.py` paints the black under-layer and the graphite plates per texel. It uses body-following coordinates (angle and bone distance on the limbs, triplanar on the torso) and a three-level brick lattice of raised and sunk pieces, slots, bolts, chamfers and sparse silver. The seat and corset front get glossy hexagonal micro-scales.
+- White plates: black teeth bite into their edges, the panel lines are finer, the roughness goes from 0.16 to 0.30 and a light clear coat is added (`CLEARCOAT_BY_KEY`).
+- Skin: a `makeup` head-style field adds lash liner, lid shadow, blush and a deeper lip centre. The lips are less saturated and the hair less glossy. `render_preview.py` adds random-walk subsurface to `_Skin`.
+- The detail is in textures only, so the triangle counts are unchanged.
+
+**Alternatives:** Modelled greebles would cost geometry. Nova drawn bare-headed is already at 257,824 of the 260k triangle budget.
+
+**Evidence:** the STATUS.md entry for the commit, `test_pipeline.py` 14/14, and the regenerated review renders.
+
+**Consequences:**
+- The GLB grows from 22.36 MB to 24.17 MB, because the detailed maps compress less.
+- The triangle counts are unchanged: 300,096 in the file, 170,160 drawn with the helmet and 257,824 bare-headed.

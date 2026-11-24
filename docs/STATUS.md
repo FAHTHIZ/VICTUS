@@ -4012,3 +4012,21 @@ Verified:
 - The C++ suites were not run in this pass.
 - The `mannequin.Head` fix only removes detached pockets. Orion's GLB was not rebuilt and is confirmed in the Orion pass.
 - Next task: Orion from the same sheet.
+
+## 2026-11-24 — Nova cybernetic detail, satin plates and skin (ADR-0253)
+
+Built:
+- `techdetail.py`:
+  - dense greeble hardware on the black under-layer (spine, straps, flanks, arms, knees, collar) and on the graphite plates;
+  - glossy hex micro-scales on the seat and corset front.
+- Armour: black teeth bite into the white plate edges, with finer panel lines, satin roughness of 0.30 and a light clear coat.
+- Skin: makeup (liner and wing, lid shadow, blush, a deeper lip centre) and muted lips. The hair cards are finer, with a softer sheen. Review renders use random-walk subsurface.
+
+Verified:
+- Full-quality Nova build: 24.17 MB and 300,096 triangles in 617 s.
+  - Only the textures changed, so the counts drawn with the helmet (170,160) and bare-headed (257,824) are unchanged.
+  - The arena copy was updated.
+- `tools/characters/test_pipeline.py`: 14/14 passed. `tools/lint/check_docs.py` passes.
+- `docs/images/characters/blender_render_{bodies,heads}.jpg`: the Nova tiles were regenerated.
+- The C++ suites were not run in this pass.
+- Next task: Orion from the same sheet.
