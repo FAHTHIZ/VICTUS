@@ -531,6 +531,33 @@ def armor_maps(tx, P, N, L: Landmarks, style, kind, cuff, trim, attrs, seed, ton
         h += vmask * 0.0008 - bev * 0.0002
         cavity -= bev * 0.4
 
+    if L.key == "nova":
+        # The sheet's small "NOVA" lettering under the V (ADR-0252): a stroke font painted black.
+        th_, lw_, gap_ = 0.0095, 0.0068, 0.0032  # letter height, width, spacing (metres)
+        glyphs = {"N": [((0, 0), (0, 1)), ((0, 1), (1, 0)), ((1, 0), (1, 1))],
+                  "O": [((0, 0), (1, 0)), ((1, 0), (1, 1)), ((1, 1), (0, 1)), ((0, 1), (0, 0))],
+                  "V": [((0, 1), (0.5, 0)), ((0.5, 0), (1, 1))],
+                  "A": [((0, 0), (0.5, 1)), ((0.5, 1), (1, 0)), ((0.22, 0.42), (0.78, 0.42))]}
+        tw_ = 4 * lw_ + 3 * gap_
+        tz0 = vz - vh * 0.5 - 0.010 - th_
+        tsel = plate & (N[:, 1] < -0.35) & (np.abs(P[:, 0]) < tw_) & (np.abs(P[:, 2] - tz0 - th_ * 0.5) < th_)
+        if tsel.any():
+            Q = np.stack([P[tsel, 0], P[tsel, 2]], 1)
+            dmin = np.full(len(Q), 1.0)
+            for i, ch in enumerate("NOVA"):
+                # She faces -Y, so the viewer's left is -X: letters run from -X to +X.
+                x0 = -tw_ * 0.5 + i * (lw_ + gap_)
+                for (ax0, az0), (ax1, az1) in glyphs[ch]:
+                    a0 = np.array([x0 + ax0 * lw_, tz0 + az0 * th_])
+                    a1 = np.array([x0 + ax1 * lw_, tz0 + az1 * th_])
+                    dv = a1 - a0
+                    u = np.clip(((Q - a0) @ dv) / (dv @ dv), 0, 1)
+                    dmin = np.minimum(dmin, np.linalg.norm(Q - a0 - u[:, None] * dv[None], axis=1))
+            tm = np.zeros(len(P))
+            tm[tsel] = soft(dmin, 0.00085 - 0.0004, 0.00085)
+            col = col * (1 - tm[:, None]) + accent * tm[:, None]
+            rough = rough * (1 - tm) + 0.3 * tm
+
     # Ceramic micro-surface: faint orange peel in the clear coat, slight roughness variation.
     h += shell * fine * 0.000004
     col = col * (1 + 0.025 * mottle[:, None] * shell[:, None])
