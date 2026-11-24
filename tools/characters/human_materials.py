@@ -31,14 +31,14 @@ def card_maps(s, t, tile, layer, hs, seed):
         if not m.any():
             continue
         rng = np.random.default_rng(seed * 31 + k)
-        ns = 64
+        ns = 120
         x0 = rng.random(ns)
-        wid = rng.uniform(0.010, 0.024, ns)
+        wid = rng.uniform(0.006, 0.016, ns)
         tend = 1.0 - rng.random(ns) ** 2 * 0.20
         freq = rng.uniform(0.4, 1.6, ns)
         ph = rng.random(ns) * 2 * np.pi
         amp = rng.uniform(0.003, 0.014, ns)
-        br = rng.uniform(0.55, 1.45, ns)
+        br = rng.uniform(0.45, 1.6, ns)
         ss, tt = s[m], t[m]
         a = np.zeros(len(ss))
         hh = np.zeros(len(ss))

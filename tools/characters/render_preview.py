@@ -121,6 +121,30 @@ def drop_materials(objs, suffixes):
         bm.free()
 
 
+def skin_subsurface(objs):
+    """Blender's glTF importer drops KHR_materials_diffuse_transmission, the skin's thin-layer
+    subsurface term in the engine (ADR-0233), and the skin then renders as painted plastic: give
+    the review renders a matching random-walk subsurface and a skin-like specular."""
+    seen = set()
+    for o in objs:
+        if o.type != "MESH":
+            continue
+        for m in o.data.materials:
+            if not m or not m.name.endswith("_Skin") or m.name in seen or not m.use_nodes:
+                continue
+            seen.add(m.name)
+            b = next((n for n in m.node_tree.nodes if n.type == "BSDF_PRINCIPLED"), None)
+            if b is None:
+                continue
+            b.subsurface_method = "RANDOM_WALK_SKIN"
+            b.inputs["Subsurface Weight"].default_value = 0.55
+            b.inputs["Subsurface Radius"].default_value = (1.0, 0.38, 0.22)
+            b.inputs["Subsurface Scale"].default_value = 0.0055
+            b.inputs["IOR"].default_value = 1.4
+            if "Specular IOR Level" in b.inputs:
+                b.inputs["Specular IOR Level"].default_value = 0.42
+
+
 def strip_to_suit(objs):
     """Deletes the Armor and Visor faces: the undersuit layer on its own."""
     import bmesh
@@ -209,6 +233,7 @@ def import_glb(path, x=0.0, suit=False, turn=0.0, pose=None, helmet="auto"):
         r.rotation_euler.z += math.radians(turn)
     if suit:
         strip_to_suit(new)
+    skin_subsurface(new)
     if os.environ.get("VICTUS_CLAY"):  # geometry review: one untextured grey for every surface
         clay = bpy.data.materials.new("Clay")
         clay.use_nodes = True

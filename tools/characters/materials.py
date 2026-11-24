@@ -61,6 +61,11 @@ def skull_axis(L):
 # ---- skin ------------------------------------------------------------------------------
 
 
+def smooth_(t):
+    t = np.clip(t, 0, 1)
+    return t * t * (3 - 2 * t)
+
+
 def skin_maps(tx, P, N, L: Landmarks, style, seed):
     n = len(P)
     rel = P - L.eye_mid
@@ -173,10 +178,40 @@ def skin_maps(tx, P, N, L: Landmarks, style, seed):
         fr *= value_noise(P, 400, seed + 10) > 0.1
         col *= (1 - fr * fr_mask * style.freckles * 0.35)[:, None] * np.array([1.0, 0.96, 0.92])
 
+    mk = getattr(style, "makeup", 0.0)
+    liner = np.zeros(n)
+    shadow_e = np.zeros(n)
+    if mk > 0:
+        # The sheet's close-up: a dark lash line (thicker on the upper lid, winged out a little),
+        # soft warm-brown shadow on the lids, rose blush high on the cheeks and lips deeper at
+        # the centre. The lid margin is the skin closest to each eyeball's centre.
+        for e, s_ in ((L.eL, 1.0), (L.eR, -1.0)):
+            r3 = dist_to(P, e)
+            near = (r3 < 0.03) & (P[:, 1] < e[1] - 0.005) & (face_front > 0.25)
+            if not near.any():
+                continue
+            rmin = np.percentile(r3[near], 0.5)
+            dz = P[:, 2] - e[2]
+            out = (P[:, 0] - e[0]) * s_
+            upper = smooth_((dz + 0.0015) / 0.003)
+            lower = 1 - upper
+            wing = np.clip(out / 0.016, 0, 1) ** 3
+            lw = 0.0018 + 0.0012 * wing
+            line_ = smooth_(1 - (r3 - rmin - lw * 0.5) / (lw * 0.5)) * (upper + 0.35 * lower) * near
+            liner = np.maximum(liner, line_)
+            shadow_e = np.maximum(shadow_e, soft(r3 - rmin, 0.002, 0.011) * upper * near * (1 - line_))
+        col *= (1 - mk * (0.78 * liner))[:, None]
+        col *= (1 - mk * 0.30 * shadow_e[:, None] * np.array([0.55, 0.85, 1.0]))
+        blush = sum(soft(dist_to(P, L.eye_mid + [s * 0.040, -0.008, -0.026]), 0.004, 0.030) for s in (1, -1)) * face_front
+        col *= 1 + mk * 0.22 * blush[:, None] * np.array([0.6, -0.25, -0.15])
+        lip_core = lips * soft(np.abs(dx), 0.0, 0.8)
+        col *= (1 - mk * 0.22 * lip_core[:, None] * np.array([0.3, 1.0, 0.8]))
+
     # Roughness.
     rough = 0.52 - 0.08 * np.clip(nose_tip * 1.2 + forehead * 0.6, 0, 1) - 0.12 * lips + 0.04 * mel
     rough = rough * (1 - nails) + 0.24 * nails
     rough += pores * 0.06
+    rough -= mk * (0.10 * lips + 0.05 * liner)  # glossy lips, a satin liner
     if style.stubble > 0:
         rough += jaw_beard * style.stubble * 0.08
     cavity = 1 - 0.3 * np.clip(-h / 0.00008, 0, 1)

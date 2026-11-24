@@ -47,6 +47,7 @@ class HeadStyle:
     hair_rough: float = 0.55
     hair_anisotropy: float = 0.0  # KHR_materials_anisotropy strength on the Hair material
     lip_size: float = 1.0  # painted lip outline scale (materials.skin_maps)
+    makeup: float = 0.0  # lash-line liner, soft eyeshadow, blush and lip gradient (ADR-0252)
     glow: tuple = (0.0, 0.0, 0.0)
     # assemble.Style fields the reused groom builder reads.
     suit: tuple = (0.0, 0.0, 0.0)
@@ -60,9 +61,9 @@ HEAD_STYLES = {
                        hair_rough=0.62),
     # Nova (the sheet's head close-up): fair East Asian skin, dark brown eyes, glossy black bob.
     # (ADR-0252: paler porcelain skin and rosier lips, after the close-up.)
-    "nova": HeadStyle(skin=(0.43, 0.275, 0.195), lips=(0.47, 0.135, 0.14), iris=(0.040, 0.022, 0.012),
+    "nova": HeadStyle(skin=(0.43, 0.275, 0.195), lips=(0.38, 0.15, 0.14), iris=(0.040, 0.022, 0.012),
                       hair=(0.0085, 0.0085, 0.0100), hair_style="bob", stubble=0.0, freckles=0.0, brow_thickness=0.90,
-                      hair_rough=0.40, hair_anisotropy=0.70, lip_size=0.80),
+                      hair_rough=0.56, hair_anisotropy=0.75, lip_size=0.80, makeup=1.0),
 }
 
 # Card tiles: the top CARD_REGION of the Hair atlas holds TILES strand tiles stacked in v.
