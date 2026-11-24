@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Screen-space reflections on opaque glossy surfaces (ADR-0199): traced in the forward shader
-// against last frame's TAA-resolved colour and linear depth history.
+// against last frame's TAA-resolved colour and linear depth history, or without TAA against the
+// history capture pass (ADR-0250).
 #include "gpu_fixture.hpp"
 #include "victus/render/scene_renderer.hpp"
 
+#include <algorithm>
 #include <optional>
 
 using namespace victus;
@@ -122,10 +124,37 @@ TEST_CASE("gpu opaque ssr: a glossy floor mirrors a glowing pillar from the TAA 
                                << channel(below, 1) << " vs " << channel(below_off, 1));
     CHECK(lit_on > lit_off + 100);
     CHECK(channel(below, 1) > channel(below_off, 1) + 40);
+
+    // ADR-0250: the Medium tier has no TAA; a capture pass keeps last frame's colour and depth.
+    RenderSettings med = RenderSettings::preset(QualityTier::Medium);
+    med.bloom = false;
+    REQUIRE_FALSE(med.taa);
+    RenderSettings med_off = med;
+    med_off.ssr_max_roughness = 0.0f;
+    (void)render(med, 1, "opaque_ssr_medium_first");
+    CHECK(feature_state(r, "ssr_opaque") == PathState::Off);
+    CHECK(r.stats().ssr_history_capture);
+    const auto med_with = render(med, 4, "opaque_ssr_medium");
+    CHECK(r.stats().opaque_ssr);
+    CHECK(r.stats().ssr_history_capture);
+    CHECK(feature_state(r, "ssr_opaque") == PathState::Active);
+    // Nothing in the frame reads the capture, so the graph must not cull it: a culled pass leaves
+    // the history from earlier frames, which a same-size static scene would hide.
+    const auto& passes = r.graph_info().executed_passes;
+    CHECK(std::find(passes.begin(), passes.end(), "ssr_history") != passes.end());
+    const auto med_without = render(med_off, 4, "opaque_ssr_medium_off");
+    CHECK_FALSE(r.stats().opaque_ssr);
+    CHECK_FALSE(r.stats().ssr_history_capture);
+    const int med_on = green_floor(med_with), med_lit_off = green_floor(med_without);
+    const std::uint32_t med_below = test::pixel(med_with, W, W / 2, foot + 4), med_below_off = test::pixel(med_without, W, W / 2, foot + 4);
+    MESSAGE("Medium: green floor pixels with SSR " << med_on << ", without " << med_lit_off << "; below foot g "
+                                                   << channel(med_below, 1) << " vs " << channel(med_below_off, 1));
+    CHECK(med_on > med_lit_off + 100);
+    CHECK(channel(med_below, 1) > channel(med_below_off, 1) + 40);
     ctx.destroy(cube);
 }
 
-TEST_CASE("gpu opaque ssr: the Medium tier (no TAA) does not trace") {
+TEST_CASE("gpu opaque ssr: capture mode has no history, so it does not trace (ADR-0250)") {
     VICTUS_REQUIRE_GPU_OR_SKIP();
     auto& ctx = *gpu().ctx;
     auto sr = SceneRenderer::create(ctx);
@@ -142,8 +171,11 @@ TEST_CASE("gpu opaque ssr: the Medium tier (no TAA) does not trace") {
         REQUIRE(r.render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
         cmd.submit_and_wait();
     };
-    frame(RenderSettings::preset(QualityTier::Medium)); // no TAA
+    r.set_capture_mode(true); // deterministic captures keep no frame-to-frame state
+    frame(RenderSettings::preset(QualityTier::Medium));
+    frame(RenderSettings::preset(QualityTier::Medium));
     CHECK_FALSE(r.stats().opaque_ssr);
+    CHECK_FALSE(r.stats().ssr_history_capture);
     const auto* f = [&]() -> const PathFeature* {
         for (const auto& x : r.path_report().features)
             if (x.name == "ssr_opaque") return &x;
@@ -151,7 +183,7 @@ TEST_CASE("gpu opaque ssr: the Medium tier (no TAA) does not trace") {
     }();
     REQUIRE(f != nullptr);
     CHECK(f->state == PathState::Off);
-    CHECK(f->reason == PathReason::Requires);
+    CHECK(f->reason == PathReason::CaptureMode);
     ctx.device().destroy(target);
     ctx.destroy(cube);
 }

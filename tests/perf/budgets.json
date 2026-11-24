@@ -80,7 +80,7 @@
         "scene.entities": [290, 638],
         "gpu.texture_bytes": [0, 24221033],
         "gpu.buffer_bytes": [0, 296147],
-        "gpu.live_textures": [0, 17],
+        "gpu.live_textures": [0, 22],
         "gpu.live_buffers": [0, 11],
         "sim.systems": [16, 35]
       }

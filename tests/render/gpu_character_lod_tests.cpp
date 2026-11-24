@@ -69,6 +69,8 @@ TEST_CASE("gpu character lods: Orion silhouette over poses and distances") {
         render::RenderSettings rs = base;
         rs.lods = lods;
         sr.value()->set_settings(rs);
+        // Each frame is an independent still: no reflection history from the previous pose (ADR-0250).
+        sr.value()->reset_history();
         // Three-quarter front view aimed at the chest; FOV narrows with distance so the robot
         // keeps a usable size on screen while the projected LOD error still grows.
         const math::Vec3 target{0, 1.0f, 0};

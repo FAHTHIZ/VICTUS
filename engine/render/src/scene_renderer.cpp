@@ -458,6 +458,9 @@ bool same_alpha_test(const Material& a, const Material& b) noexcept {
            a.uv_scale.x == b.uv_scale.x && a.uv_scale.y == b.uv_scale.y && a.uv_offset.x == b.uv_offset.x &&
            a.uv_offset.y == b.uv_offset.y && a.nearest_filter == b.nearest_filter;
 }
+struct SsrHistoryUniforms {
+    Vec4 depth; // ADR-0250: xy linear depth 1 / (x d + y) from window depth d
+};
 struct TaaUniforms {
     Mat4 reproject;
     Vec4 params, screen;
@@ -2764,9 +2767,16 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     else if (S.render_scale < S.taa_below_scale) scale_taa_ = true;
     else if (S.render_scale >= S.taa_below_scale + 0.05f) scale_taa_ = false;
     const bool taa = (S.taa || scale_taa_) && !capture_mode_;
+    // ADR-0250: without TAA, screen-space reflections still get last frame's colour and linear
+    // depth from a capture pass that writes the same history textures TAA would.
+    const bool ssr_capture = !taa && !capture_mode_ && S.screen_space_reflections && S.ssr_max_roughness > 0.0f &&
+                             dev.capabilities().backend != rhi::Backend::GLES && proj_unjittered[2].w < 0.0f &&
+                             depth_history_format_ != rhi::Format::RGBA8_UNORM && S.debug_view == DebugView::None;
     if (!taa) {
-        history_valid_ = false;
+        if (!ssr_capture) history_valid_ = false;
         reactive_valid_[0] = reactive_valid_[1] = false;
+    } else if (history_is_capture_) {
+        history_valid_ = false; // a half-size reflection capture is no TAA history
     }
     // Temporal upscaling (ADR-0055): below output resolution the TAA resolve reconstructs and
     // accumulates at the output size, with a longer jitter cycle so every output pixel is visited.
@@ -4139,24 +4149,28 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     lighting.horizon_color = rgb(env_.sky_horizon, env_.ambient_intensity);
     lighting.ground_color = rgb(env_.ground, env_.ambient_intensity, static_cast<float>(local_lights.size()));
     // ADR-0199: opaque glossy surfaces trace reflections against last frame's TAA-resolved colour
-    // and linear depth history. Needs TAA (the history), a perspective camera (clip w is the
-    // stored linear depth) and a backend with the two spare texture units (not GLES).
+    // and linear depth history (without TAA, the ADR-0250 capture pass writes it). Needs a
+    // perspective camera (clip w is the stored linear depth) and a backend with the two spare
+    // texture units (not GLES).
     const std::uint32_t hist = history_index_;
     {
         using O = RenderPathFacts::OpaqueSsr;
         O state = O::Active;
         if (!S.screen_space_reflections || S.ssr_max_roughness <= 0.0f) state = O::Disabled;
-        else if (!taa) state = O::NeedsTaa;
         else if (dev.capabilities().backend == rhi::Backend::GLES) state = O::Backend;
         else if (!(proj_unjittered[2].w < 0.0f) || depth_history_format_ == rhi::Format::RGBA8_UNORM) state = O::Projection;
+        else if (!taa && !ssr_capture) state = O::NeedsTaa; // capture mode or a debug view (ADR-0250)
         else if (!history_valid_ || !history_[hist] || !depth_history_[hist]) state = O::NoHistory;
         facts_.opaque_ssr = state;
         stats_.opaque_ssr = state == O::Active;
         if (state == O::Active) {
             lighting.ssr_prev_vp = prev_view_proj_;
-            lighting.ssr_params = {static_cast<float>(std::max(S.ssr_steps / 2u, 8u)), S.ssr_max_distance, S.ssr_thickness,
-                                   S.ssr_max_roughness};
-            lighting.ssr_frame = {static_cast<float>(frame_index_ % 64u), 1.0f, 0.0f, 0.0f};
+            // TAA averages the per-pixel ray jitter over frames, so half the steps suffice. Without TAA
+            // (ADR-0250) the trace takes every step and keeps one noise pattern: a pattern that changed
+            // each frame would shimmer, and nothing would average it.
+            const std::uint32_t steps = taa ? std::max(S.ssr_steps / 2u, 8u) : S.ssr_steps;
+            lighting.ssr_params = {static_cast<float>(steps), S.ssr_max_distance, S.ssr_thickness, S.ssr_max_roughness};
+            lighting.ssr_frame = {taa ? static_cast<float>(frame_index_ % 64u) : 0.0f, 1.0f, 0.0f, 0.0f};
         }
     }
     lighting.cluster_grid = {static_cast<float>(clusters.grid.tiles_x), static_cast<float>(clusters.grid.tiles_y),
@@ -4732,7 +4746,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     const RGTexture hdr = graph.create_texture("hdr_color", hdr_desc);
     rhi::TextureDesc depth_desc = hdr_desc;
     depth_desc.format = depth_format_;
-    const bool depth_sampled = screen_occlusion || taa || occlusion || fog || clouds || precip_count > 0 || !particle_draws.empty() ||
+    const bool depth_sampled = screen_occlusion || taa || ssr_capture || occlusion || fog || clouds || precip_count > 0 || !particle_draws.empty() ||
                                !gpu_jobs.empty() || !decal_draws.empty() || !water_draws.empty();
     depth_desc.usage = rhi::TextureUsageDepthTarget | (depth_sampled ? rhi::TextureUsageSampled : 0u);
     // With MSAA the forward pass has its own multisampled depth, so the pre-pass provides the
@@ -5784,6 +5798,39 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 ctx.pass->draw(3);
             });
         scene_color = resolved;
+    } else if (ssr_capture) {
+        // Half resolution: the trace samples by uv, the colour read is a 2x2 box (bilinear at the
+        // texel corner), depth keeps the farthest of the 2x2, and a quarter of the memory suits the
+        // tiers without TAA.
+        const std::uint32_t cur = history_index_ ^ 1u, prev = history_index_;
+        const std::uint32_t cw = std::max(rw / 2u, 1u), ch = std::max(rh / 2u, 1u);
+        VICTUS_TRY_STATUS(ensure_history(cur, cw, ch));
+        if (!history_[prev]) VICTUS_TRY_STATUS(ensure_history(prev, cw, ch)); // steady texture count from frame one
+        auto cap_pl = post_pipeline("ssr_history.frag", hdr_format_, rhi::BlendMode::Opaque, depth_history_format_);
+        if (!cap_pl) return std::move(cap_pl).error();
+        const float p22 = proj_unjittered[2].z, p23 = proj_unjittered[3].z;
+        const SsrHistoryUniforms hu{{std::abs(p23) > 1e-12f ? 1.0f / p23 : 0.0f, std::abs(p23) > 1e-12f ? p22 / p23 : 1.0f, 0.0f, 0.0f}};
+        const RGTexture color_out = graph.import_texture("ssr_color_history", history_[cur], color_desc(hdr_format_, cw, ch));
+        const RGTexture depth_out =
+            graph.import_texture("ssr_depth_history", depth_history_[cur], color_desc(depth_history_format_, cw, ch));
+        graph.add_pass(
+            "ssr_history",
+            [&](PassBuilder& b) {
+                b.read(hdr);
+                b.read(depth);
+                b.write_color(color_out, rhi::LoadOp::DontCare);
+                b.write_color(depth_out, rhi::LoadOp::DontCare);
+                b.side_effect(); // next frame reads the history; nothing in this graph does
+            },
+            [this, hdr, depth, hu, pl = cap_pl.value()](PassContext& ctx) {
+                ctx.pass->bind_pipeline(pl);
+                ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, hu);
+                ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(hdr), ctx_.linear_clamp());
+                ctx.pass->bind_texture(rhi::ShaderStage::Fragment, 1, ctx.texture(depth), ctx_.nearest_clamp());
+                ctx.pass->draw(3);
+            });
+        stats_.ssr_history_capture = true;
+        facts_.ssr_history_capture = true;
     }
 
     // Dual-filter bloom: progressively halved mip chain, then tent upsampling back up.
@@ -6095,11 +6142,12 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     VICTUS_TRY_STATUS(graph.compile());
     VICTUS_TRY_STATUS(graph.execute(dev, cmd, pool_));
     graph_info_ = graph.info();
-    if (taa) {
+    if (taa || ssr_capture) {
         history_index_ ^= 1u;
         history_valid_ = true;
+        history_is_capture_ = ssr_capture;
         prev_view_proj_ = view_proj_unjittered;
-        ++frame_index_;
+        if (taa) ++frame_index_; // the jitter sequence; the capture uses no jitter or noise rotation
     }
     ++post_frame_;
     if (clouds) ++cloud_frame_;

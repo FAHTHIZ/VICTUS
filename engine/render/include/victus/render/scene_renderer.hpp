@@ -868,6 +868,7 @@ struct SceneStats {
     bool taa{false};                   // TAA resolved this frame
     bool taa_by_scale{false};          // ... because the render scale fell below taa_below_scale (ADR-0188)
     bool opaque_ssr{false};            // ADR-0199: opaque surfaces traced screen-space reflections
+    bool ssr_history_capture{false};   // ADR-0250: without TAA, a pass kept last frame's colour and depth for SSR
     bool taa_history{false};           // ... with a valid history (false on the first frame / after a reset)
     bool taa_disocclusion{false};      // ... with the depth-history disocclusion test (ADR-0147)
     bool taa_thin_features{false};     // ... with thin-feature locks (ADR-0148)
@@ -1352,6 +1353,7 @@ private:
     bool reactive_valid_[2]{};
     std::uint32_t history_index_{0};
     bool history_valid_{false};
+    bool history_is_capture_{false}; // history written by the ADR-0250 SSR capture, not by TAA
     math::Mat4 prev_view_proj_{math::Mat4::identity()};
     std::uint64_t frame_index_{0};
     bool adaptation_valid_{false};

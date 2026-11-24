@@ -81,6 +81,7 @@ struct RenderPathFacts {
     // ADR-0199: opaque screen-space reflections this frame, or why not.
     enum class OpaqueSsr : std::uint8_t { Disabled, NeedsTaa, Backend, Projection, NoHistory, Active };
     OpaqueSsr opaque_ssr{OpaqueSsr::NoHistory};
+    bool ssr_history_capture{false}; // ADR-0250: the history came from the capture pass, not TAA
     std::uint32_t particle_batches_submitted{0}, particle_batches_drawn{0}, particles_drawn{0}, ribbon_vertices{0};
     // CPU batches and their particles (billboards + ribbon vertices) inside the view, before the
     // max_particles budget (ADR-0109).

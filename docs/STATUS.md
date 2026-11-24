@@ -3949,3 +3949,25 @@ Verified (Release, lavapipe, Xvfb):
 - Full `ctest -j2` with `RUN_SERIAL`: 100% of 50 passed in 1,043 s (victus_editor_tests 525 s, victus_studio_tests 407 s, victus_editor_tools_tests 14 s, victus_perf_budgets 112 s with p95 228, 5.8–15.5, 301, 259 and 80 ms). The only core files came from the deliberate `crash::trigger` test.
 - Next task: Rendering gaps — SSR on Medium (without TAA) and GLES.
 
+## 2026-11-24 — Screen-space reflections without TAA (ADR-0250)
+
+Built:
+- `ssr_history.frag`: without TAA, a fullscreen pass writes this frame's HDR colour (a bilinear 2x2 box, NaN and infinity set to 0) and the farthest linear depth of each 2x2 block (`textureGather`) into the history pair at half the render resolution. Next frame's opaque SSR traces against it as it does against the TAA history (ADR-0199).
+- The pass is a render-graph side effect: nothing in the frame reads it.
+- Without TAA, the trace uses all `ssr_steps` and a fixed noise pattern. The capture is skipped in capture mode, in debug views, on GLES and for orthographic cameras.
+- `SceneRenderer::Stats::ssr_history_capture` and `RenderPathFacts::ssr_history_capture`. The render report shows `ssr_opaque` Active with "(history capture pass, no TAA)", for example `victus run --render-report` on template-3d at Medium: "active 16 steps ... (history capture pass, no TAA)".
+- A TAA frame no longer accepts a capture as its history (`history_is_capture_`), and capture frames do not advance the TAA jitter sequence.
+
+Diagnosis:
+- A first full-resolution version looked correct in the test, but the graph had culled the pass. The history textures were the same size as the earlier High frames, so they still held TAA output of the same static scene. At half size they were new and uninitialised, and the reflections went dark. A test check now requires `ssr_history` among the executed passes.
+- The first full `ctest -j2` run found three GPU cases that compared independent shots or two renderers: character LOD silhouettes, weather puddle ripples, and occlusion under TAA. A capture taken from the previous shot changed the next one. Two problems in the engine came out of this: TAA treated a half-size capture as valid history, and capture frames advanced the jitter index. Both are fixed. The LOD and weather shot helpers now call `reset_history()`, so each shot is an independent still.
+
+Verified (Release, lavapipe, Xvfb):
+- `victus_gpu_tests -tc="gpu opaque ssr*"`: 3/3 passed. Pillar-and-floor scene: High with TAA has 297 green floor pixels with SSR (0 without) and Medium has 296 (0 without). The green channel below the pillar foot is 255 against 60 in both. In the side-by-side comparison, Medium's reflection edges are slightly softer.
+- The three cases above together with the SSR cases: 6/6 passed.
+- `victus_render_tests`: 58,154 assertions passed.
+- `tools/shaders/compile_shaders.py --check`: up to date (65 shaders).
+- `ctest -R perf_budgets`: template-simulation had 20 live textures against a budget of 17 (the four history textures), so its budget is now 22. Its texture bytes are 21,713,264, within the 24,221,033 budget. In the final full run, frame p95 in ms: sample-arena 248, dungeon_crawler 5.8, platformer 18.0, template-2d 20.0, template-3d 287, multiplayer 284 and simulation 87, all within budget.
+- `clang-tidy` on scene_renderer.cpp, render_path.cpp and the three changed GPU test files: only the expected unknown `-Wshadow=local` flag.
+- Full `ctest -j2` with `VICTUS_REQUIRE_GPU=1`: 100% of 50 passed in 1,028 s (victus_gpu_tests 496 s, victus_editor_tests 512 s, victus_studio_tests 397 s, victus_perf_budgets 113 s).
+- Next task: Rendering gaps — SSR on GLES, then LOD cross-fade and planar reflections.

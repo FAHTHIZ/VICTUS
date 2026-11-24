@@ -89,6 +89,7 @@ Shot shoot(SceneRenderer& r, const Environment& env, F&& content, const char* sa
     auto& dev = gpu().ctx->device();
     auto target = test::make_target(W, H);
     r.set_settings(settings);
+    r.reset_history(); // each shot is an independent still (no reflection history, ADR-0250)
     r.set_time(time);
     r.begin(cam, sun, env);
     content(r);

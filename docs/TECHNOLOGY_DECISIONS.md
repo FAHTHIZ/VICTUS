@@ -2863,3 +2863,29 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 **Consequences:**
 - Headless frames on a CPU far ahead of the GPU now wait instead of piling up. This bounds memory as well as descriptor caches.
 - The underlying SDL_GPU behaviour remains. A window-attached process on lavapipe that records very heavy frames still keeps its caches at their high-water mark. KNOWN_LIMITATIONS records the `sysctl vm.max_map_count` workaround. Hardware Vulkan drivers do not map a page per descriptor set.
+
+### ADR-0250: Screen-space reflections without TAA from a half-resolution history capture
+
+**Status:** Accepted (2026-11-24).
+
+**Context:** Opaque screen-space reflections (ADR-0199) trace against last frame's colour and linear depth, which the TAA resolve writes. Medium has no TAA, so glossy floors, wet streets and polished metal lost their reflections on that tier, the one most players on modest hardware use.
+
+**Decision:**
+- Without TAA, a fullscreen pass `ssr_history.frag` runs after the opaque and transparent passes. It writes this frame's HDR colour and linear depth into the existing history pair at half the render resolution:
+  - Colour is read bilinearly at the texel corner, a 2x2 box, with NaN and infinity set to 0, as in TAA.
+  - Depth is the farthest of the 2x2 block (`textureGather`). A nearer sample put a grazing floor in front of its own reflected rays.
+- The pass is declared a side effect: nothing in the frame reads it, and the render graph culled it otherwise.
+- Without TAA, the trace takes every `ssr_steps` step and a fixed noise pattern (`ssr_frame.x = 0`). Nothing averages a pattern that changes each frame, so it would shimmer. TAA keeps half the steps and the rotating pattern.
+- The capture is skipped in capture mode (probe and thumbnail renders, which have no previous frame), in debug views, on GLES (no spare texture units) and for orthographic cameras. The render path reports `ssr_opaque` Active with "(history capture pass, no TAA)".
+
+**Alternatives:**
+- Full-resolution capture: twice the reflection detail, but four times the memory. At 1080p the two RGBA16F and RG16F pairs come to about 50 MB, against about 12 MB at half size.
+- Tracing the current frame's depth prepass: the prepass has no colour, and the forward pass cannot read the colour it is writing.
+- Enabling TAA on Medium: it adds a resolve pass and ghosting on the tier meant to be cheap.
+
+**Evidence:** STATUS.md entry for the commit (pixel counts against High with TAA, perf budgets, full ctest).
+
+**Consequences:**
+- Medium reflections are softer than High's, with half-resolution edges, and like TAA's they lag one frame.
+- The simulation template's live texture count grew by four, to 20, and its perf budget was raised from 17 to 22.
+- GLES still has no opaque SSR.

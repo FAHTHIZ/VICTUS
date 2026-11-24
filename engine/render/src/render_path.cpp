@@ -297,15 +297,17 @@ RenderPathReport describe_render_path(const RenderSettings& settings, const Rend
     switch (opaque_ssr_set ? f.opaque_ssr : RenderPathFacts::OpaqueSsr::Disabled) {
     case RenderPathFacts::OpaqueSsr::Active:
         add("ssr_opaque", PathState::Active, PathReason::None,
-            std::format("{} steps over {:g} m, roughness below {:g}, from last frame", std::max(S.ssr_steps / 2u, 8u), S.ssr_max_distance,
-                        S.ssr_max_roughness));
+            std::format("{} steps over {:g} m, roughness below {:g}, from last frame{}",
+                        f.ssr_history_capture ? S.ssr_steps : std::max(S.ssr_steps / 2u, 8u), S.ssr_max_distance,
+                        S.ssr_max_roughness, f.ssr_history_capture ? " (history capture pass, no TAA)" : ""));
         break;
     case RenderPathFacts::OpaqueSsr::Disabled:
         add("ssr_opaque", PathState::Off, by(opaque_ssr_set == opaque_ssr_tier),
             "glossy surfaces reflect probes and the environment only");
         break;
     case RenderPathFacts::OpaqueSsr::NeedsTaa:
-        add("ssr_opaque", PathState::Off, f.capture_mode ? PathReason::CaptureMode : PathReason::Requires, "needs the TAA history");
+        add("ssr_opaque", PathState::Off, f.capture_mode ? PathReason::CaptureMode : PathReason::Requires,
+            "needs last frame's colour and depth (off in capture mode and debug views)");
         break;
     case RenderPathFacts::OpaqueSsr::Backend:
         add("ssr_opaque", PathState::Off, PathReason::Unsupported, "no spare texture units on OpenGL ES");
