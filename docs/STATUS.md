@@ -4057,4 +4057,19 @@ Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, lavapipe, `SDL_VIDEO_DRIV
 - Full `ctest -j2 --output-on-failure`: 50/50 passed in 1,067 s.
 - `victus_bench_runtime --reps 20 --filter retained`, before (3 runs) -> after (5 runs): extract 0.929/0.900/0.946 -> 0.724/0.704/0.679/0.681/0.664 ms; total 1.343/1.274/1.338 -> 1.104/1.100/1.089/1.069/1.050 ms. Transforms (about 0.09 ms) and render (about 0.30 ms) are unchanged.
 - Not verified: the 1 ms accept target (total about 1.05-1.10 ms), physical hardware.
+- Commit: 0130abd.
 - Next task: a measured IPO/LTO Release build, then parallel batching.
+
+## 2026-11-24 — IPO/LTO Release build measured
+
+Built:
+- `VICTUS_LTO` (default OFF): `check_ipo_supported`, then `INTERPROCEDURAL_OPTIMIZATION_RELEASE` and `_RELWITHDEBINFO` on every target configured by `victus_configure_target`. Third-party libraries keep their own settings. Presets `release-lto` (configure, build, test) in `build/release-lto`.
+
+Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, lavapipe, `SDL_VIDEO_DRIVER=offscreen`, both trees built from the same source, runs alternated):
+- `cmake --preset release-lto -DVICTUS_WARNINGS_AS_ERRORS=ON` and a build of the three benchmarks: no warnings. `victus_bench_runtime` is 21.6 MB with LTO against 26.0 MB without.
+- `victus_bench_runtime --reps 20 --filter retained`, total ms/frame over 5 runs each: without LTO 1.053/1.092/1.112/1.015/1.121 (mean 1.079), with LTO 1.113/1.112/1.183/1.053/1.113 (mean 1.115). Extract 0.63-0.70 against 0.66-0.76 ms. No gain.
+- `victus_bench_render`, 3 runs each: `sprite_batch/build_upload_20k` p50 1.618/1.666/1.595 ms without LTO, 1.893/1.948/1.881 ms with (about 17% slower). GPU frame benchmarks are within noise (for example `frame_1024_cubes_720p_gpu` 219-223 against 218-220 ms).
+- `victus_bench_scene`, runs 2-3 of each: `ecs/each_integrate_1M` p50 0.833/0.841 ms without LTO, 0.797/0.763 ms with (about 5% faster). `update_transforms_10k_all_moving` 0.211 ms both ways; `parse_load_10k` 60.1-60.6 against 58.5-60.7 ms.
+- Conclusion: LTO stays opt-in. The remaining CPU-plan work is structural (parallel batching, ECS change versions), not compiler flags.
+- Not verified: Clang ThinLTO, physical hardware.
+- Next task: commit 2D normal maps and shadow casters (GAP-19, ADR-0255), then parallel batching.

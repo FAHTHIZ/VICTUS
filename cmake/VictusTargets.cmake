@@ -24,6 +24,10 @@ function(victus_configure_target target)
         target_compile_options(${target} PRIVATE -fsanitize=${VICTUS_SANITIZE} -fno-omit-frame-pointer)
         target_link_options(${target} PRIVATE -fsanitize=${VICTUS_SANITIZE})
     endif()
+    if(VICTUS_LTO AND VICTUS_LTO_SUPPORTED)
+        set_target_properties(${target} PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE ON
+                                                   INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO ON)
+    endif()
 endfunction()
 
 # Engine module layers (docs/ARCHITECTURE.md, "Module map"). A module may link only modules on a

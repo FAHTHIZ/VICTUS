@@ -25,6 +25,16 @@ else()
     set(_victus_tools_default ON)
 endif()
 option(VICTUS_BUILD_TOOLS "Build the editor, the standalone player and the victus CLI" ${_victus_tools_default})
+# Link-time optimisation of VICTUS-owned targets in optimised builds (measured: docs/STATUS.md,
+# "IPO/LTO Release build"). Third-party libraries keep their own settings.
+option(VICTUS_LTO "Interprocedural (link-time) optimisation for VICTUS targets in Release builds" OFF)
+if(VICTUS_LTO)
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT VICTUS_LTO_SUPPORTED OUTPUT _victus_ipo_error LANGUAGES CXX)
+    if(NOT VICTUS_LTO_SUPPORTED)
+        message(WARNING "VICTUS_LTO requested but not supported by this toolchain: ${_victus_ipo_error}")
+    endif()
+endif()
 set(VICTUS_SANITIZE "" CACHE STRING "Sanitizers for VICTUS targets: '', 'address,undefined', 'thread'")
 
 include(VictusTargets)
