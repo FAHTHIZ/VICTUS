@@ -1267,10 +1267,14 @@ void Editor::start_play(std::uint64_t seed, bool networked) {
             so.plugin_call = [pm = play_plugins_.get()](std::string_view name, std::string_view args) { return pm->call(name, args); };
             so.plugin_has = [pm = play_plugins_.get()](std::string_view name) { return pm->has_function(name); };
         }
-        so.on_scene_loaded = [this](scene::Scene&, std::string_view path) {
+        so.on_scene_loaded = [this](scene::Scene& s, std::string_view path) {
             if (play_physics_) play_physics_->clear();
             if (auto* a = audio()) a->stop_all();
             notify("Play: scene changed to " + std::string(path));
+            // The hosted session follows: in-editor and remote clients load it too (ADR-0259).
+            if (play_server_ && play_scripts_)
+                if (auto st = play_server_->travel(s, path, play_scripts_->scene_params()); !st.ok())
+                    notify("level travel: " + st.error().message, true);
         };
         if (auto host = script::ScriptHost::create(so)) {
             play_scripts_ = std::move(host).value();

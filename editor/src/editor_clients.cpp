@@ -81,6 +81,10 @@ void Editor::start_editor_clients() {
             so.default_locale = project_->settings().default_locale;
             so.script_api = project_->settings().script_api;
             so.save_directory = project_->dev_save_directory();
+            so.project_root = project_->root(); // level travel loads project scenes (ADR-0259)
+            so.on_scene_loaded = [cl = c.get()](scene::Scene&, std::string_view) {
+                if (cl->physics) cl->physics->clear();
+            };
             if (auto host = script::ScriptHost::create(so)) {
                 c->scripts = std::move(host).value();
                 script::add_script_systems(c->sim, *c->scripts);
@@ -133,6 +137,10 @@ void Editor::start_editor_clients() {
         co.port = net_settings_.port;
         co.name = c->name;
         co.game_id = net::make_game_id(project_->settings().name, scene_path_);
+        co.on_travel = [cl = c.get()](std::string_view level, const json::Value& params) -> Status {
+            if (!cl->scripts) return make_error(ErrorCode::Unsupported, "this client has no script host to load scenes");
+            return cl->scripts->load_scene(cl->scene, level, params);
+        };
         c->client = std::make_unique<net::NetClient>(std::move(t), co);
         c->client->install(c->sim);
         play_clients_.push_back(std::move(c));

@@ -58,7 +58,7 @@ Items that keep the whole engine from production use, regardless of feature work
 | Animation | Usable | IK limits are one cone per chain (no per-joint/twist); foot placement uses one ray per foot along world up; no sync markers, GPU morphs; layer masks read-only in Studio | Sync markers, then GPU morph targets |
 | Navigation (Recast/Detour) | Usable | Single tile; whole-mesh rebuilds; no off-mesh links | Tiled navmesh |
 | Gameplay AI | Usable | Visual tree editor done (ADR-0176); no environment queries | Environment queries |
-| Gameplay framework / no-code behaviours | Usable | Attributes/inventories not replicated, no Studio inspector for them; no session/level lifecycle | Session lifecycle |
+| Gameplay framework / no-code behaviours | Usable | No Studio inspector for attributes and inventories; level travel is not seamless (no loading screens) | Attribute inspector |
 | Scripting (Luau) | Usable | Snapshot does not cover signatures or return shapes; no deprecation warnings; no attach to running player; interpreter only | Generated Luau type definitions (signatures in the snapshot, editor autocomplete) |
 | Visual scripting | Experimental | No breakpoints, user functions or comments | Breakpoints |
 | Audio (miniaudio) | Usable | Simple comb reverb; no per-source effects, HRTF, ducking, profiler | Ducking and per-source effects |

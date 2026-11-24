@@ -4140,4 +4140,22 @@ Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, lavapipe, `SDL_VIDEO_DRIV
 - clang-tidy on `session.cpp` and `framework.cpp`: clean. `check_docs.py`: consistent.
 - Full `ctest -j2 --output-on-failure`: 50/50 passed in 1,028 s.
 - Not verified: bandwidth with large inventories (each change resends the whole component), real UDP links.
+- Commit: 58ca8f4.
 - Next task: game session and level lifecycle (networked level travel).
+
+## 2026-11-24 — Networked level travel (ADR-0259)
+
+Built:
+- `NetServer::travel(scene, level, params)`, `level()` and `level_changes()`: forgets the old level's tracked entities, sends a reliable `kTravel` message (20: sequence, level, params JSON up to 16 KB), spawns new characters for the host and every connected client from the new level's templates, announces its entities and resends the roster. Welcomes after the first travel start with `kTravel`; a rejoin whose character died gets a new one.
+- `ClientOptions::on_travel(level, params)`, `NetClient::level()` and `level_changes()`: the client drops its mirrored entities, prediction history and local player, loads the level (a failure ends the connection with the reason; no loader logs a warning and keeps the connection) and re-parks templates.
+- The player and Studio play mode call `travel` from `on_scene_loaded` when hosting, and their clients load through `ScriptHost::load_scene`. `ScriptHost::scene_params()` added.
+- Tests (`tests/net/net_tests.cpp`): two clients follow the host to a second level with new characters and keep moving there; a later joiner is sent to the current level first; a client without a loader keeps its connection.
+
+Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, lavapipe, `SDL_VIDEO_DRIVER=offscreen VICTUS_REQUIRE_GPU=1`):
+- `victus_net_tests -tc="*ADR-0259*"`: 2/2 cases pass. With the welcome's `kTravel` removed, the late-joiner checks fail, so they catch it.
+- `victus_net_tests`: 30/30 cases, 1,113 assertions.
+- clang-tidy on `session.cpp`, `player.cpp`, `editor_clients.cpp` and `script.cpp`: clean. `check_docs.py`: consistent.
+- Full `ctest -j2 --output-on-failure`: 48/50 passed in 991 s. The two failures (`victus_render_tests` shader-source check and `victus_docs_lint`) came from the next unit's uncommitted shader and ADR edits in the working tree while ctest ran. With those set aside, `victus_render_tests` passes 78/78 cases (58,218 assertions) and `check_docs.py` is consistent.
+- Not verified: the player and Studio wiring end to end (compiled, not run), the `level_changed` script message (scripts consume the net inbox, so the test cannot read it), real UDP links.
+- Commit: see git log (the commit after 58ca8f4).
+- Next task: planar reflections for water.

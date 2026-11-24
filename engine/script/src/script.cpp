@@ -988,6 +988,7 @@ void ScriptHost::forget_prefabs() { impl_->prefabs.clear(); }
 void ScriptHost::set_input_map(gameplay::InputMap map) { impl_->options.input_map = std::move(map); }
 void ScriptHost::set_current_scene(std::string path) { impl_->current_scene = std::move(path); }
 const std::string& ScriptHost::current_scene() const noexcept { return impl_->current_scene; }
+const json::Value& ScriptHost::scene_params() const noexcept { return impl_->scene_params; }
 
 Status ScriptHost::load_scene(scene::Scene& scene, std::string_view path, json::Value params) {
     Impl& h = *impl_;

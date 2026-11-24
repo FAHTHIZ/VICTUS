@@ -3047,6 +3047,24 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 - The one-cell pad covers rotated tiles and filtering at the edges. Tiles larger than their cell are not supported by the pad.
 - Culling assumes the map lies in the batch's z = 0 plane, as all 2D tilemaps do.
 
+### ADR-0259: Networked level travel
+
+**Status:** Accepted (2026-11-24).
+
+**Context:** Gameplay framework gaps (ROADMAP): a single-player game moves between levels with `scene.load` (ADR-0037), but a networked session could not. When the server loaded another scene, its tracked entities and every player character disappeared. Clients kept the old scene, and the new level's entities could not be matched by UUID. Unreal handles this with server travel, where the session and its players survive and every machine loads the next map.
+
+**Decision:**
+- `NetServer::travel(scene, level, params)` runs after the server's scene has loaded the level. It forgets the old level's tracked entities without despawn messages, because clients drop their whole scene. It sends a reliable `kTravel` message (20: level sequence, level path, params JSON, at most 16 KB). It then parks the new level's player templates, spawns new characters for the host and every connected client, announces the level's scene entities and sends the roster.
+- Net ids keep counting across levels and are never reused. Delta-snapshot baselines from the old level stay valid: their entries simply match no entity, as after a despawn.
+- Clients held for a rejoin lose their old character. When they come back, they get a new one in the current level. Every welcome after the first travel starts with `kTravel`, so a later joiner, which loaded the starting scene, switches to the level before it receives the world. A client already on that level (a rejoin) skips the load.
+- `ClientOptions::on_travel(level, params)` loads the level on the client. A failure ends the connection with the reason. On travel the client clears its mirrored entities, prediction history and local player, then re-parks templates. Both sides queue a `level_changed` {level} net message for scripts.
+- The player and the Studio play mode call `travel` from `on_scene_loaded` when hosting. A host's `scene.load` / `scene.reload` therefore takes its clients along, with `scene.params()` intact. Their clients use `ScriptHost::load_scene`. `ScriptHost::scene_params()` exposes the params.
+
+**Consequences:**
+- Multiplayer games move between levels with the same `scene.load` they use offline. Session state that must survive travel (scores, teams) lives in module-level Luau state or in components that the level's scripts restore from `scene.params()`.
+- Travel is not seamless. Every machine loads synchronously, and nothing streams. A loading screen or a persistent transition level is future work.
+- Clients do not validate that the level exists before the server commits. A client that cannot load it disconnects instead of desynchronising.
+
 ### ADR-0258: Replicated gameplay components
 
 **Status:** Accepted (2026-11-24).

@@ -1688,3 +1688,111 @@ TEST_CASE("session: components outside the allow-lists are not replicated (ADR-0
     CHECK_FALSE(gameplay::has_attribute(p.scene, mirror, "health")); // client refused it
     CHECK_FALSE(gameplay::has_tag(p.scene, mirror, "Loot"));         // server never sent it
 }
+
+namespace {
+// A second level: the same layout with new scene entities (fresh UUIDs), a player template and
+// a marker only this level has.
+fs::Path second_level_file() {
+    const fs::Path f = script_dir() / "arena_level2.vscene";
+    if (!std::filesystem::exists(f)) {
+        Scene s;
+        build_arena(s, 2);
+        const Entity m = s.create("Level2 Marker");
+        s.world().get<Transform>(m)->position = {4, 1, -4};
+        s.world().add<NetworkIdentityComponent>(m);
+        s.update_transforms();
+        REQUIRE(s.save_file(f).ok());
+    }
+    return f;
+}
+Status load_level(Peer& p, std::string_view level) {
+    auto st = p.scene.load_file(script_dir() / std::string(level));
+    if (!st.ok()) return st;
+    p.physics_world->clear();
+    p.scene.update_transforms();
+    return {};
+}
+NetClient& add_travelling_client(Session& s, const char* name) {
+    s.peers.push_back(std::make_unique<Peer>(0));
+    Peer* peer = s.peers.back().get();
+    auto o = client_options(7777, name);
+    o.on_travel = [peer](std::string_view level, const json::Value&) { return load_level(*peer, level); };
+    s.clients.push_back(std::make_unique<NetClient>(s.network.endpoint(), o));
+    s.clients.back()->install(peer->sim);
+    return *s.clients.back();
+}
+} // namespace
+
+TEST_CASE("session: level travel moves every client to the next level (ADR-0259)") {
+    ServerOptions so;
+    so.host_player = true;
+    Session s(so); // registers the components the level file needs
+    second_level_file();
+    NetClient& a = add_travelling_client(s, "a");
+    s.step(30);
+    REQUIRE(a.connected());
+    Peer& p = *s.peers[0];
+    const Entity old_player = a.local_player();
+    REQUIRE(old_player != scene::kNullEntity);
+
+    REQUIRE(load_level(s.server_peer, "arena_level2.vscene").ok());
+    json::Value params = json::Value::object();
+    params.set("round", 2.0);
+    REQUIRE(s.server->travel(s.server_peer.scene, "arena_level2.vscene", params).ok());
+    s.step(40);
+
+    CHECK(a.connected());
+    CHECK(a.level() == "arena_level2.vscene");
+    CHECK(a.level_changes() == 1);
+    CHECK(s.server->level() == "arena_level2.vscene");
+    // The client loaded the level and mirrors its entities.
+    const Entity marker = p.find("Level2 Marker");
+    REQUIRE(marker != scene::kNullEntity);
+    REQUIRE(p.scene.world().get<NetState>(marker));
+    CHECK(p.scene.world().get<NetState>(marker)->net_id != 0);
+    // Everyone has a new character in the level: the client (predicted), the host, and the
+    // roster names them.
+    const Entity mine = a.local_player();
+    REQUIRE(mine != scene::kNullEntity);
+    CHECK(p.scene.world().alive(mine));
+    REQUIRE(s.server->local_player() != scene::kNullEntity);
+    CHECK(s.server_peer.scene.world().alive(s.server->local_player()));
+    const Entity server_copy = s.server_player(a.local_id());
+    REQUIRE(server_copy != scene::kNullEntity);
+    CHECK(s.server_peer.scene.world().alive(server_copy));
+    std::size_t with_player = 0;
+    for (const ClientInfo& c : a.clients()) with_player += c.player != scene::kNullEntity;
+    CHECK(with_player == 2); // host and client
+
+    // Replication keeps working: a crate the server moves shows up on the client.
+    const Entity crate = s.server_peer.find("Crate 1");
+    REQUIRE(crate != scene::kNullEntity);
+    s.server_peer.scene.world().get<Transform>(crate)->position = {3, 0.5f, 3};
+    s.step(30);
+    const Entity mirror = p.find("Crate 1");
+    REQUIRE(mirror != scene::kNullEntity);
+    CHECK(horizontal(p.position(mirror), {3, 0, 3}) < 0.3f);
+
+    // A later joiner starts in the first scene and is sent to the level before its world.
+    NetClient& late = add_travelling_client(s, "late");
+    s.step(40);
+    REQUIRE(late.connected());
+    CHECK(late.level() == "arena_level2.vscene");
+    CHECK(s.peers[1]->find("Level2 Marker") != scene::kNullEntity);
+    CHECK(late.local_player() != scene::kNullEntity);
+}
+
+TEST_CASE("session: a client without a level loader keeps its connection but warns (ADR-0259)") {
+    Session s;
+    second_level_file();
+    NetClient& a = s.add_client("plain");
+    s.step(30);
+    REQUIRE(a.connected());
+    REQUIRE(load_level(s.server_peer, "arena_level2.vscene").ok());
+    CHECK_FALSE(s.server->travel(s.server_peer.scene, "").ok());
+    REQUIRE(s.server->travel(s.server_peer.scene, "arena_level2.vscene").ok());
+    s.step(20);
+    CHECK(a.connected());
+    CHECK(a.level_changes() == 1);
+    CHECK(s.peers[0]->find("Level2 Marker") == scene::kNullEntity); // not loaded
+}

@@ -284,6 +284,8 @@ public:
     // startup and transitions update it.
     void set_current_scene(std::string path);
     [[nodiscard]] const std::string& current_scene() const noexcept;
+    // The params of the load that started the running scene (`scene.params()`; null when none).
+    [[nodiscard]] const json::Value& scene_params() const noexcept;
     // Switches to the scene at `path` now (not from inside update), as `scene.load` would at the
     // end of an update: validates it first and leaves `scene` untouched on failure.
     [[nodiscard]] Status load_scene(scene::Scene& scene, std::string_view path, json::Value params = {});

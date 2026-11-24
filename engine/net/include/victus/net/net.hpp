@@ -355,6 +355,16 @@ public:
     // Network clients (not the host), welcomed and held, ordered by id.
     [[nodiscard]] std::vector<ClientDiagnostics> client_diagnostics() const;
 
+    // Level travel (ADR-0259). Call after `scene` loaded the next level (e.g. from
+    // ScriptHost on_scene_loaded): the session stays, its clients load `level` too, every
+    // client (and the host) gets a new character from the level's player templates, and scene
+    // entities are announced again. Clients held for a rejoin get theirs when they come back,
+    // and later joiners are sent to the level first. Scripts receive `level_changed` {level}.
+    Status travel(scene::Scene& scene, std::string_view level, json::Value params = {});
+    // The level of the last travel (empty before any) and how many travels happened.
+    [[nodiscard]] const std::string& level() const noexcept;
+    [[nodiscard]] std::uint32_t level_changes() const noexcept;
+
     // Manual driving (tests, tools); install() calls these from its systems.
     void receive(scene::Scene& scene, double now);
     void replicate(scene::Scene& scene, double now, float dt);
@@ -379,6 +389,11 @@ struct ClientOptions {
     // character) for this many seconds before failing. 0 = fail immediately.
     double reconnect_window{20.0};
     double reconnect_interval{1.0};   // seconds between rejoin attempts
+    // Level travel (ADR-0259): the server switched every machine to `level` (a project scene path)
+    // with `params`. Load it into the client's scene here (players call
+    // ScriptHost::load_scene); a failure ends the connection. Unset: the level is not loaded and
+    // the new level's entities are missing.
+    std::function<Status(std::string_view level, const json::Value& params)> on_travel;
     // Components the client accepts from the server (ADR-0258); others are ignored.
     std::vector<std::string> replicated_components{"Attributes", "Inventory", "Tags"};
 };
@@ -407,6 +422,10 @@ public:
 
     // True once the server refused or dropped the connection (see diagnostics().status).
     [[nodiscard]] bool failed() const noexcept;
+    // The level the server last sent this client to (empty: still the starting scene) and the
+    // number of travels it followed (ADR-0259).
+    [[nodiscard]] const std::string& level() const noexcept;
+    [[nodiscard]] std::uint32_t level_changes() const noexcept;
 
     void receive(scene::Scene& scene, double now, const gameplay::InputSource* input);
     void replicate(scene::Scene& scene, double now, float dt);

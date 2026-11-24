@@ -47,7 +47,10 @@ enum Msg : std::uint8_t {
     kServerGoodbye = 17,
     kRoster = 18,
     kComponents = 19, // varuint net_id, varuint n, n x (str component, str json; null = removed)
+    kTravel = 20,     // u32 level seq, str level, str params json (ADR-0259)
 };
+constexpr std::size_t kMaxLevelBytes = 512;
+constexpr std::size_t kMaxTravelParamsBytes = 16 * 1024;
 constexpr std::size_t kMaxComponentBytes = 64 * 1024;
 enum SpawnKind : std::uint8_t { kSceneEntity = 0, kPlayer = 1 };
 constexpr std::size_t kMaxInputFrames = 8;
@@ -505,6 +508,10 @@ struct NetServer::Impl {
         double deadline{0};
     };
     std::vector<Held> held;
+    // Level travel (ADR-0259).
+    std::uint32_t level_seq{0};
+    std::string level;
+    json::Value level_params;
 
     struct Tracked {
         Entity e;
@@ -701,6 +708,79 @@ struct NetServer::Impl {
         return n;
     }
 
+    void write_travel(ByteWriter& w) {
+        w.u8(kTravel);
+        w.u32(level_seq);
+        w.str(level);
+        const auto bytes = encode_json(level_params);
+        w.str(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+    }
+    // Spawns client `c`'s characters from the level's player templates and announces them.
+    void spawn_players(Client& c) {
+        for (std::size_t i = 0; i < templates.size(); ++i) {
+            const Template& tpl = templates[i];
+            auto e = instantiate(*scene, tpl, c.name);
+            if (!e) {
+                VICTUS_LOG_ERROR("net", "cannot spawn player: {}", e.error().message);
+                continue;
+            }
+            // Spread players on a ring around the template position.
+            if (auto* tr = scene->world().get<Transform>(*e)) {
+                const float a = static_cast<float>(c.id) * 2.39996f; // golden angle
+                tr->position = tpl.position + math::Vec3{std::sin(a), 0, std::cos(a)} * options.spawn_spacing;
+            }
+            if (i == 0) c.player = *e;
+            const std::uint32_t id = track(*e, kPlayer, tpl.uuid, c.id, c.name);
+            ByteWriter sw;
+            write_spawn(sw, id, tracked[id]);
+            broadcast(Channel::Reliable, sw);
+        }
+    }
+
+    Status travel(Scene& s, std::string_view lvl, json::Value params) {
+        if (lvl.empty() || lvl.size() > kMaxLevelBytes)
+            return make_error(ErrorCode::InvalidArgument, "travel: the level path must be 1-" + std::to_string(kMaxLevelBytes) + " bytes");
+        if (encode_json(params).size() > kMaxTravelParamsBytes)
+            return make_error(ErrorCode::LimitExceeded, "travel: params larger than " + std::to_string(kMaxTravelParamsBytes) + " bytes");
+        if (!begun || scene != &s) begin(s);
+        auto& w = s.world();
+        // Normally the level load removed every tracked entity. Ones that survived (the caller
+        // kept them) are announced again as scene entities; old characters go.
+        for (auto& [id, t] : tracked) {
+            if (!w.alive(t.e)) continue;
+            if (t.kind == kPlayer) s.destroy(t.e);
+            else if (auto* st = w.get<NetState>(t.e)) st->net_id = 0;
+        }
+        tracked.clear();
+        host_player = {};
+        for (Held& h : held) h.player = {};
+        for (auto& [peer, c] : clients) {
+            c.player = {};
+            c.sent.clear();
+        }
+        ++level_seq;
+        level = std::string(lvl);
+        level_params = std::move(params);
+        ByteWriter tw;
+        write_travel(tw);
+        broadcast(Channel::Reliable, tw);
+        begin(s); // the level's player templates and input routing; the host's new character
+        for (auto& [id, t] : tracked) {
+            ByteWriter sw;
+            write_spawn(sw, id, t);
+            broadcast(Channel::Reliable, sw);
+        }
+        scan_new();
+        for (auto& [peer, c] : clients)
+            if (c.welcomed) spawn_players(c);
+        ByteWriter rw;
+        write_roster(rw);
+        broadcast(Channel::Reliable, rw);
+        inbox.push_back({kServerId, "level_changed", json::Value(level)});
+        VICTUS_LOG_INFO("net", "travelled to {} ({} clients)", level, clients.size());
+        return {};
+    }
+
     void write_vars(ByteWriter& w, std::uint32_t id, const json::Value& vars) {
         w.u8(kVars);
         w.varuint(id);
@@ -811,6 +891,11 @@ struct NetServer::Impl {
         w.u32(tick);
         w.u64(c.token);
         send(c, Channel::Reliable, w);
+        if (level_seq) { // the session moved on from the starting scene: load its level first
+            ByteWriter tw;
+            write_travel(tw);
+            send(c, Channel::Reliable, tw);
+        }
         // Existing world state, then this client's player (announced to everyone).
         for (auto& [id, t] : tracked) {
             if (!scene->world().alive(t.e)) continue;
@@ -825,7 +910,7 @@ struct NetServer::Impl {
             ByteWriter cw;
             if (write_components(cw, id, t, true)) send(c, Channel::Reliable, cw);
         }
-        if (rejoin) {
+        if (rejoin && scene->world().alive(c.player)) {
             ByteWriter rw;
             write_roster(rw);
             broadcast(Channel::Reliable, rw);
@@ -833,23 +918,14 @@ struct NetServer::Impl {
             VICTUS_LOG_INFO("net", "client {} '{}' reconnected", c.id, c.name);
             return;
         }
-        for (std::size_t i = 0; i < templates.size(); ++i) {
-            const Template& tpl = templates[i];
-            auto e = instantiate(*scene, tpl, c.name);
-            if (!e) {
-                VICTUS_LOG_ERROR("net", "cannot spawn player: {}", e.error().message);
-                continue;
-            }
-            // Spread players on a ring around the template position.
-            if (auto* tr = scene->world().get<Transform>(*e)) {
-                const float a = static_cast<float>(c.id) * 2.39996f; // golden angle
-                tr->position = tpl.position + math::Vec3{std::sin(a), 0, std::cos(a)} * options.spawn_spacing;
-            }
-            if (i == 0) c.player = *e;
-            const std::uint32_t id = track(*e, kPlayer, tpl.uuid, c.id, c.name);
-            ByteWriter sw;
-            write_spawn(sw, id, tracked[id]);
-            broadcast(Channel::Reliable, sw);
+        spawn_players(c); // new, or back after a level travel took its old character
+        if (rejoin) {
+            ByteWriter rw;
+            write_roster(rw);
+            broadcast(Channel::Reliable, rw);
+            inbox.push_back({c.id, "client_rejoined", json::Value(static_cast<double>(c.id))});
+            VICTUS_LOG_INFO("net", "client {} '{}' reconnected into {}", c.id, c.name, level);
+            return;
         }
         ByteWriter rw;
         write_roster(rw);
@@ -1220,6 +1296,12 @@ std::vector<NetMessage> NetServer::take_messages() { return std::exchange(impl_-
 
 Entity NetServer::local_player() const noexcept { return impl_->hosting() ? impl_->host_player : Entity{}; }
 
+Status NetServer::travel(scene::Scene& scene, std::string_view level, json::Value params) {
+    return impl_->travel(scene, level, std::move(params));
+}
+const std::string& NetServer::level() const noexcept { return impl_->level; }
+std::uint32_t NetServer::level_changes() const noexcept { return impl_->level_seq; }
+
 std::vector<ClientInfo> NetServer::clients() const {
     std::vector<ClientInfo> out;
     if (impl_->hosting()) out.push_back({kServerId, clean_player_name(impl_->options.host_name), impl_->host_player, 0.0f});
@@ -1393,6 +1475,8 @@ struct NetClient::Impl {
     std::uint32_t snapshot_ack{0};                     // newest decoded snapshot (sent with input)
     std::uint32_t last_snapshot_bytes{0};
     std::vector<ClientInfo> roster;
+    std::uint32_t level_seq{0}, level_changes{0}; // level travel (ADR-0259)
+    std::string level;
     bool synced{false};
     std::vector<NetMessage> inbox;
     std::vector<TransportEvent> events;
@@ -1569,6 +1653,32 @@ struct NetClient::Impl {
         for (const auto& [k, val] : v->as_object())
             if (!val.is_null()) merged.set(k, val);
         st.vars = std::move(merged);
+    }
+
+    void handle_travel(ByteReader& r) {
+        const std::uint32_t seq = r.u32();
+        std::string lvl = r.str(kMaxLevelBytes);
+        const std::string text = r.str(kMaxTravelParamsBytes);
+        if (!r.done() || lvl.empty()) return;
+        if (seq == level_seq) return; // already there (a rejoin within the same level)
+        auto params = decode_json(text, kMaxTravelParamsBytes);
+        level_seq = seq;
+        level = std::move(lvl);
+        ++level_changes;
+        // The old level's entities go with it; the server announces the new level's.
+        entities.clear();
+        local_player = {};
+        history.clear();
+        pending_correction = {};
+        if (options.on_travel) {
+            if (Status st = options.on_travel(level, params ? *params : json::Value{}); !st.ok())
+                return fail("cannot load level " + level + ": " + st.error().message);
+        } else {
+            VICTUS_LOG_WARN("net", "server travelled to {}, but this client has no on_travel handler", level);
+        }
+        begin(*scene); // the level's player templates and input routing
+        inbox.push_back({kServerId, "level_changed", json::Value(level)});
+        VICTUS_LOG_INFO("net", "travelled to {}", level);
     }
 
     void handle_components(ByteReader& r) {
@@ -1802,6 +1912,7 @@ struct NetClient::Impl {
             case kDespawn: handle_despawn(r); break;
             case kVars: handle_vars(r); break;
             case kComponents: handle_components(r); break;
+            case kTravel: handle_travel(r); break;
             case kRoster: handle_roster(r); break;
             case kSnapshot:
                 last_snapshot_bytes = static_cast<std::uint32_t>(ev.data.size());
@@ -2004,6 +2115,9 @@ Status NetClient::send(std::string_view name, const json::Value& value, std::uin
 }
 
 std::vector<NetMessage> NetClient::take_messages() { return std::exchange(impl_->inbox, {}); }
+
+const std::string& NetClient::level() const noexcept { return impl_->level; }
+std::uint32_t NetClient::level_changes() const noexcept { return impl_->level_changes; }
 
 std::vector<ClientInfo> NetClient::clients() const {
     auto list = impl_->roster;

@@ -224,10 +224,17 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     physics::PhysicsWorld* physics_for_scenes = nullptr;
     audio::AudioEngine* audio_for_scenes = nullptr;
     bool world_changed = false; // a scene transition replaces the streamed world (6h)
-    so.on_scene_loaded = [&physics_for_scenes, &audio_for_scenes, &world_changed](scene::Scene&, std::string_view) {
+    // A hosting player's transitions take its clients along (level travel, ADR-0259).
+    net::NetServer* server_for_scenes = nullptr;
+    script::ScriptHost* scripts_for_scenes = nullptr;
+    so.on_scene_loaded = [&physics_for_scenes, &audio_for_scenes, &world_changed, &server_for_scenes,
+                          &scripts_for_scenes](scene::Scene& s, std::string_view loaded) {
         world_changed = true;
         if (physics_for_scenes) physics_for_scenes->clear();
         if (audio_for_scenes) audio_for_scenes->stop_all();
+        if (server_for_scenes && scripts_for_scenes)
+            if (auto st = server_for_scenes->travel(s, loaded, scripts_for_scenes->scene_params()); !st.ok())
+                VICTUS_LOG_ERROR("player", "level travel to {}: {}", loaded, st.error().message);
     };
     // Native plugins (ADR-0078) load before scripts so Luau can call their functions from the
     // first frame; their systems join the simulation after the engine's own.
@@ -240,6 +247,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
     auto scripts = script::ScriptHost::create(so);
     if (!scripts) return std::move(scripts).error();
     (*scripts)->set_current_scene(rel);
+    scripts_for_scenes = scripts->get();
     // Worker threads for physics (and future parallel systems); 0 = hardware_concurrency - 1.
     jobs::JobSystem workers(0);
     // Per-draw visibility of large frames runs on the same pool (ADR-0228); the renderer only uses
@@ -389,6 +397,10 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         co.port = addr->second;
         co.name = o.player_name;
         co.game_id = net::make_game_id(proj->settings().name, rel);
+        // The server's level travel loads the same scene here (ADR-0259).
+        co.on_travel = [&scene, host = scripts->get()](std::string_view level, const json::Value& params) {
+            return host->load_scene(scene, level, params);
+        };
         client = std::make_unique<net::NetClient>(std::move(t), co);
         client->install(sim);
         VICTUS_LOG_INFO("player", "connecting to {}:{} as '{}'", co.host, co.port, co.name);
@@ -435,6 +447,7 @@ Result<PlayerReport> run(const PlayerOptions& o) {
         so2.host_name = o.player_name;
         server = std::make_unique<net::NetServer>(std::move(t), so2);
         server->install(sim);
+        server_for_scenes = server.get();
         VICTUS_LOG_INFO("player", "hosting on UDP port {} as '{}' ({})", uo.port, o.player_name, security);
     }
     PlayerReport report;
