@@ -54,6 +54,8 @@ EMISSIVE_STRENGTH = {"Frame": 3.0, "Armor": 4.0, "Visor": 6.0, "Helmet": 4.0}
 # KHR_materials_clearcoat (ADR-0203): glazed armour, the visor's glass and the wet eyes carry a
 # glossy coat over their textured base; the composite undersuit stays satin.
 CLEARCOAT = {"Armor": (0.65, 0.06), "Visor": (1.0, 0.02), "Helmet": (0.75, 0.05), "Eye": (1.0, 0.0)}
+# Nova's pearl plates are satin, not glazed (ADR-0252, the sheet's material swatches).
+CLEARCOAT_BY_KEY = {"nova": {"Armor": (0.30, 0.20), "Helmet": (0.45, 0.10)}}
 # Skin: thin-layer subsurface (KHR_materials_diffuse_transmission -> the engine's subsurface term).
 SUBSURFACE = {"Skin": (0.32, (1.0, 0.36, 0.24))}
 
@@ -338,8 +340,9 @@ def export(spec, body, lods, textures, sk: Skeleton, L, style, out_path):
             m["emissiveFactor"] = [1.0, 1.0, 1.0]
             m["extensions"] = {"KHR_materials_emissive_strength": {"emissiveStrength": EMISSIVE_STRENGTH.get(mname, 2.0)}}
             w.used_ext.add("KHR_materials_emissive_strength")
-        if mname in CLEARCOAT:
-            coat, coat_rough = CLEARCOAT[mname]
+        coats = {**CLEARCOAT, **CLEARCOAT_BY_KEY.get(spec.key, {})}
+        if mname in coats:
+            coat, coat_rough = coats[mname]
             m.setdefault("extensions", {})["KHR_materials_clearcoat"] = {"clearcoatFactor": coat,
                                                                         "clearcoatRoughnessFactor": coat_rough}
             w.used_ext.add("KHR_materials_clearcoat")
