@@ -537,7 +537,9 @@ def groom_maps(tx, P, N, attrs, style, seed):
         s2 = lic(Ph, fh, 0.0014, 5, 0.002, seed + 1)
         strands = np.clip(0.5 + 0.8 * s1 + 0.45 * s2, 0, 1)
         marg = attrs["margin"][hair, 0]
-        density = np.clip(marg / (0.006 if style.hair_style == "crop" else 0.004), 0, 1)
+        # (ADR-0252: the bob's cards cover its hairline, so the shell edge is cut clean rather than
+        # stippled where the swept fringe exposes it.)
+        density = np.clip(marg / {"crop": 0.006, "bob": 0.0012}.get(style.hair_style, 0.004), 0, 1)
         thresh = 1 - density
         a = np.clip((strands - thresh * 0.95) / 0.08, 0, 1)
         a = np.where(density > 0.98, 1.0, a)

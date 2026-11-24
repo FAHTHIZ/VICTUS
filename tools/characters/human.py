@@ -60,7 +60,7 @@ HEAD_STYLES = {
                        hair_rough=0.62),
     # Nova (the sheet's head close-up): fair East Asian skin, dark brown eyes, glossy black bob.
     # (ADR-0252: paler porcelain skin and rosier lips, after the close-up.)
-    "nova": HeadStyle(skin=(0.50, 0.345, 0.265), lips=(0.42, 0.16, 0.15), iris=(0.040, 0.022, 0.012),
+    "nova": HeadStyle(skin=(0.43, 0.275, 0.195), lips=(0.47, 0.135, 0.14), iris=(0.040, 0.022, 0.012),
                       hair=(0.0085, 0.0085, 0.0100), hair_style="bob", stubble=0.0, freckles=0.0, brow_thickness=0.90,
                       hair_rough=0.40, hair_anisotropy=0.70, lip_size=0.80),
 }
@@ -129,8 +129,8 @@ class NovaSculpt:
         d = v.copy()
         for e in self.eyes:
             r = np.linalg.norm(v - e, axis=1)
-            w = _smooth((0.030 - r) / 0.018)
-            d += (v - e) * (0.09 * w)[:, None]
+            w = _smooth((0.032 - r) / 0.018)
+            d += (v - e) * (0.17 * w)[:, None]
         return d
 
     def __call__(self, v):
@@ -141,9 +141,9 @@ class NovaSculpt:
         dx, dz, dy = v[:, 0] / 0.030, (v[:, 2] - mz) / 0.016, (v[:, 1] - my) / 0.022
         w = np.exp(-(dx ** 2 + dz ** 2 + dy ** 2) * 1.5)
         # (ADR-0252: the sheet's lips are soft and full, so the squeeze is gentle.)
-        d[:, 2] += (v[:, 2] - mz) * (-0.12 * w)
+        d[:, 2] += (v[:, 2] - mz) * (-0.04 * w)
         d[:, 0] += v[:, 0] * (-0.14 * w)
-        d[:, 1] -= 0.0012 * w * np.clip(1 - dy, 0, 1)
+        d[:, 1] -= 0.0018 * w * np.clip(1 - dy, 0, 1)
         # Shorter lower face: lift everything between the nose base and the chin (and the
         # underside of the jaw with it), 9 % of the nose-to-chin height at the chin.
         span = self.nose_z - self.chin_z
@@ -172,7 +172,8 @@ class NovaSculpt:
             dz = v[:, 2] - e[2]
             w = (_smooth((0.020 - np.abs(v[:, 0] - e[0])) / 0.008) * _smooth((0.016 - np.abs(dz)) / 0.008)
                  * _smooth((e[1] + 0.004 - v[:, 1]) / 0.008))
-            d[:, 2] += dz * np.where(dz > 0, 0.30, 0.16) * w
+            d[:, 2] += dz * np.where(dz > 0, 0.60, 0.30) * w
+            d[:, 0] += (v[:, 0] - e[0]) * 0.10 * w
         return d
 
 
