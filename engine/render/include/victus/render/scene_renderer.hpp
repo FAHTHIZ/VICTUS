@@ -1034,7 +1034,8 @@ public:
     // creation). Each frame submit_instance_group() costs one cull, LOD pick and probe pick per
     // cluster instead of per instance, and nothing is re-uploaded. Trade-offs: a visible cluster
     // draws all its copies (no per-instance frustum culling inside it), every copy of a cluster
-    // uses the cluster's LOD (picked from the cluster bounds and its largest-scale copy), and
+    // uses the cluster's LOD (picked from the cluster bounds and its largest-scale copy, with
+    // hysteresis and a cross-fade per cluster, ADR-0251), and
     // group draws are not GPU occlusion culled and write no object motion vectors (static;
     // vertex functions still do, ADR-0244).
     // The mesh must outlive the group. Groups are owned by this renderer and die with it.

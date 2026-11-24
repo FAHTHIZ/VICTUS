@@ -2947,7 +2947,17 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     const bool lod_record = (S.lod_hysteresis > 0.0f || S.lod_fade_frames > 0) && S.lods && S.force_lod < 0;
     const bool lod_history = lod_record && lod_history_valid_ && lod_history_w_ == width && lod_history_h_ == height;
     lod_next_.clear(lod_record ? draws_.size() : 0);
-    const auto lod_key = [](const Draw& d) { return mix(d.motion_id, reinterpret_cast<std::uintptr_t>(d.mesh)); };
+    // Tracked draws carry a motion id; retained-group clusters (ADR-0251) are tracked by group id
+    // (slot and generation, so a rebuilt group starts fresh) and their first instance.
+    const auto lod_tracked = [](const Draw& d) { return d.motion_id != 0 || d.group >= 0; };
+    const auto lod_key = [this](const Draw& d) {
+        if (d.group >= 0) {
+            const std::uint64_t id = (std::uint64_t{groups_[static_cast<std::size_t>(d.group)].generation} << 32) |
+                                     static_cast<std::uint32_t>(d.group);
+            return mix(mix(0x6a09e667f3bcc909ull ^ id, d.cluster_first), reinterpret_cast<std::uintptr_t>(d.mesh));
+        }
+        return mix(d.motion_id, reinterpret_cast<std::uintptr_t>(d.mesh));
+    };
     // Outgoing-level copies of cross-fading draws (ADR-0184); reserved so pointers stay valid.
     lod_fade_out_.clear();
     lod_fade_out_.reserve(S.lod_fade_frames > 0 ? draws_.size() : 0);
@@ -2969,7 +2979,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             const Aabb world = d.culling_bounds();
             const bool blended = d.material->blend != MaterialBlend::Opaque;
             LodHistory::Entry previous;
-            if (lod_history && d.motion_id != 0) previous = lod_prev_.entry(lod_key(d));
+            if (lod_history && lod_tracked(d)) previous = lod_prev_.entry(lod_key(d));
             std::uint8_t stateless = 0;
             d.lod = select_lod(*d.mesh, d.model, world, camera_.position, lod_pixels_per_unit, S, previous.lod, &stateless);
             r.held = previous.lod >= 0 && d.lod != stateless;
@@ -2977,7 +2987,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             // advances one step per frame and ends after lod_fade_frames.
             std::uint8_t fade_from = 0, fade_step = 0;
             d.lod_fade = 0.0f;
-            if (S.lod_fade_frames > 0 && previous.lod >= 0 && !blended && d.group < 0 && !d.material->shadow_only) {
+            if (S.lod_fade_frames > 0 && previous.lod >= 0 && !blended && !d.material->shadow_only) {
                 if (d.lod != previous.lod) {
                     fade_from = static_cast<std::uint8_t>(previous.lod);
                     fade_step = 1;
@@ -3074,7 +3084,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         Draw& d = draws_[i];
         const DrawVisibility& r = vis[i];
         if (r.held) ++stats_.lod_held;
-        if (lod_record && d.motion_id != 0) lod_next_.insert(lod_key(d), r.history_lod, r.fade_from, r.fade_step);
+        if (lod_record && lod_tracked(d)) lod_next_.insert(lod_key(d), r.history_lod, r.fade_from, r.fade_step);
         stats_.shadow_receiver_culled += r.receiver_culled;
         if (r.cascades != 0) {
             for (std::uint32_t c = 0; c < cascade_count_; ++c)
@@ -3346,7 +3356,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 const rhi::BufferHandle buf = groups_[static_cast<std::size_t>(d->group)].buffer;
                 if (!out.empty()) {
                     Batch& p = out.back();
-                    if (p.buffer == buf && p.lod == lod && p.first->probe == d->probe &&
+                    if (p.buffer == buf && p.lod == lod && p.first->probe == d->probe && p.first->lod_fade == d->lod_fade &&
                         p.instance_offset + p.instance_count == d->cluster_first) {
                         p.instance_count += d->cluster_count;
                         continue;

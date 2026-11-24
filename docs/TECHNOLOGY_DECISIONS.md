@@ -2889,3 +2889,27 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 - Medium reflections are softer than High's, with half-resolution edges, and like TAA's they lag one frame.
 - The simulation template's live texture count grew by four, to 20, and its perf budget was raised from 17 to 22.
 - GLES still has no opaque SSR.
+
+### ADR-0251: LOD hysteresis and cross-fade for retained-group clusters
+
+**Status:** Accepted (2026-11-24).
+
+**Context:** The LOD history behind hysteresis (ADR-0077) and the dithered cross-fade (ADR-0184) is keyed by motion id. Retained instance-group clusters (ADR-0162) have no motion id: their motion-vector path depends on that. So scattered foliage (ADR-0164), static draws promoted into groups (ADR-0230) and user groups switched level in one frame, and could flip back and forth at a threshold. The ROADMAP listed this as the remaining LOD cross-fade work.
+
+**Decision:**
+- A cluster draw is tracked for LOD by the group's id (slot and generation) and its first instance in the group buffer, together with the mesh. A rebuilt group gets a new generation and starts without history.
+- Clusters then use the existing paths:
+  - Hysteresis.
+  - A fade over `lod_fade_frames`: a dithered copy at the outgoing level, which casts no shadow and skips the pre-pass.
+- Neighbouring clusters merge into one draw only when their fade values match.
+
+**Alternatives:**
+- Giving clusters a synthetic motion id: the motion-vector pass would then treat them as moving objects with the representative copy's transform.
+- Per-instance fades inside a cluster: needs per-instance LOD state in the group buffer, while the group LOD is per cluster by design.
+
+**Evidence:** STATUS.md entry for the commit (`gpu lods: cross-fade*` with a one-copy group: same thresholds, triangle counts and pixel checks as the tracked draw).
+
+**Consequences:**
+- While a cluster fades, all of its copies are drawn twice, at both levels, for `lod_fade_frames` frames. Hysteresis keeps switches rare.
+- A fading cluster loses early-Z for those frames, and breaks a merged run of clusters into separate draws.
+- Group statistics now include `lod_held` and `lod_fading`.

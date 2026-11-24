@@ -3971,3 +3971,17 @@ Verified (Release, lavapipe, Xvfb):
 - `clang-tidy` on scene_renderer.cpp, render_path.cpp and the three changed GPU test files: only the expected unknown `-Wshadow=local` flag.
 - Full `ctest -j2` with `VICTUS_REQUIRE_GPU=1`: 100% of 50 passed in 1,028 s (victus_gpu_tests 496 s, victus_editor_tests 512 s, victus_studio_tests 397 s, victus_perf_budgets 113 s).
 - Next task: Rendering gaps — SSR on GLES, then LOD cross-fade and planar reflections.
+
+## 2026-11-24 — LOD cross-fade for retained-group clusters (ADR-0251)
+
+Built:
+- Retained instance-group clusters (scattered foliage, static draws promoted into groups, user groups) now keep LOD history like moving objects. The key is the group's slot and generation, the cluster's first instance in the group buffer and the mesh, so a rebuilt group starts without history.
+- Clusters use the existing hysteresis (ADR-0077) and the dithered cross-fade over `lod_fade_frames` (ADR-0184): a second copy at the outgoing level that casts no shadow and skips the pre-pass.
+- Neighbouring clusters merge into one draw only when their fade values match.
+
+Verified (Release, lavapipe, Xvfb):
+- `victus_gpu_tests -tc="gpu lods*,gpu instance group*,gpu: foliage*,gpu static*,gpu retained*"`: 12/12 passed.
+- The cross-fade case now runs its checks a second time on a one-copy instance group: the same frames fade, the done frame and the snap behave as for the tracked draw, and a rebuilt group starts fresh. Pixels matching neither level in fade frames 1–4: 0, 0, 2 and 0 (limit 40). The mid-fade image (`lod_fade_group_mid.png`) matches the tracked draw's.
+- `clang-tidy` on scene_renderer.cpp and gpu_lod_tests.cpp: only the expected unknown `-Wshadow=local` flag.
+- Full `ctest -j2 --output-on-failure` with `VICTUS_REQUIRE_GPU=1`: 49 of 50 passed in 1,060 s (victus_gpu_tests 515 s, victus_editor_tests 546 s, victus_perf_budgets 113 s). The one failure was `victus_docs_lint`, which requires this ADR in CHANGELOG.md; it passes with the entry below. Perf frame p95 in ms: sample-arena 254, dungeon_crawler 6.2, platformer 11.7, template-2d 14.3, template-3d 284, multiplayer 266 and simulation 81, all within budget.
+- Next task: 2D shadows and normal maps (GAP-19).

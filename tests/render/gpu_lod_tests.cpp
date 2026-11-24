@@ -655,7 +655,7 @@ TEST_CASE("gpu shadows: per-cascade LOD cuts shadow triangles without changing t
     ctx.destroy(sphere);
 }
 
-TEST_CASE("gpu lods: cross-fade dissolves a level change over lod_fade_frames without holes") {
+TEST_CASE("gpu lods: cross-fade dissolves a level change over lod_fade_frames without holes, also for group clusters") {
     VICTUS_REQUIRE_GPU_OR_SKIP();
     auto& ctx = *gpu().ctx;
     auto sr = SceneRenderer::create(ctx);
@@ -744,5 +744,52 @@ TEST_CASE("gpu lods: cross-fade dissolves a level change over lod_fade_frames wi
     r.reset_history();
     (void)shoot(r, fade, {0, 0, near_z}, untracked);
     CHECK(shoot(r, fade, {0, 0, far_z}, untracked).stats.lod_fading == 0);
+
+    // ADR-0251: a retained-group cluster is tracked by its group and first instance, so it fades
+    // like a tracked draw (one copy at the origin: the same threshold as above).
+    const math::Mat4 one[] = {math::Mat4::identity()};
+    SceneRenderer::InstanceGroupDesc desc;
+    desc.mesh = &sphere;
+    desc.material = mat;
+    desc.models = one;
+    auto group = r.create_instance_group(desc);
+    REQUIRE(group.ok());
+    auto grouped = [&](SceneRenderer& rr) { (void)rr.submit_instance_group(group.value()); };
+    r.reset_history();
+    const Shot g_first = shoot(r, fade, {0, 0, near_z}, grouped);
+    CHECK(g_first.stats.group_clusters_visible == 1);
+    CHECK(g_first.stats.lod_fading == 0);
+    CHECK(g_first.stats.triangles == lod0);
+    for (int frame = 1; frame <= 4; ++frame) {
+        const Shot s = shoot(r, fade, {0, 0, far_z}, grouped, frame == 2 ? "lod_fade_group_mid" : nullptr);
+        INFO("group fade frame " << frame);
+        CHECK(s.stats.lod_fading == 1);
+        CHECK(s.stats.triangles == lod0 + lod1);
+        std::size_t far_off = 0;
+        for (std::size_t i = 0; i < s.px.size(); i += 4) {
+            int d_coarse = 0, d_fine = 0;
+            for (std::size_t c = 0; c < 3; ++c) {
+                d_coarse += std::abs(int(s.px[i + c]) - int(solid_far.px[i + c]));
+                d_fine += std::abs(int(s.px[i + c]) - int(solid_fine.px[i + c]));
+            }
+            if (std::min(d_coarse, d_fine) > 90) ++far_off;
+        }
+        MESSAGE("group cross-fade frame " << frame << ": " << far_off << " pixels match neither level");
+        CHECK(far_off <= 40);
+    }
+    const Shot g_done = shoot(r, fade, {0, 0, far_z}, grouped);
+    CHECK(g_done.stats.lod_fading == 0);
+    CHECK(g_done.stats.triangles == lod1);
+    CHECK(mean_diff(g_done.px, solid_far.px) < 0.05);
+    // Snapping still works for groups with fades off, and a rebuilt group (new id) starts fresh.
+    r.reset_history();
+    (void)shoot(r, snap, {0, 0, near_z}, grouped);
+    CHECK(shoot(r, snap, {0, 0, far_z}, grouped).stats.lod_fading == 0);
+    (void)shoot(r, fade, {0, 0, near_z}, grouped);
+    r.destroy_instance_group(group.value());
+    auto rebuilt = r.create_instance_group(desc);
+    REQUIRE(rebuilt.ok());
+    CHECK(shoot(r, fade, {0, 0, far_z}, [&](SceneRenderer& rr) { (void)rr.submit_instance_group(rebuilt.value()); }).stats.lod_fading == 0);
+    r.destroy_instance_group(rebuilt.value());
     ctx.destroy(sphere);
 }
