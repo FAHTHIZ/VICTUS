@@ -673,7 +673,7 @@ def layout(J, torso: Torso, key):
         # Knee: a faceted graphite cop.
         ks = Chart("limb", 1.0, kn, an, seam=-120, radius=0.06)
         add(Plate("Kneecap.L", ks, [(0, -0.075), (40, -0.05), (42, 0.035), (0, 0.075), (-42, 0.035), (-40, -0.05)],
-                  thickness=0.030 * k, crown=0.02, round=0.006, trim=1, tone=0, facets=4, facet_mix=0.5 if nova else 0.85,
+                  thickness=0.030 * k, crown=0.02, round=0.006, trim=1, tone=1 if nova else 0, facets=4, facet_mix=0.5 if nova else 0.85,
                   gate=(kn - _unit(an - kn) * 0.09, kn + _unit(an - kn) * 0.08, 0.12)))
         add(Plate("Knee.L", ks, [(0, -0.13), (58, -0.085), (62, 0.05), (0, 0.11), (-62, 0.05), (-58, -0.085)],
                   thickness=0.020 * k, crown=0.025, tone=1, round=0.008, gate=(kn - _unit(an - kn) * 0.09, kn + _unit(an - kn) * 0.08, 0.12)))

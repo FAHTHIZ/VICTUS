@@ -68,7 +68,7 @@ STYLES = {
     # Nova (Frame 02): a pearl-white undersuit and white ceramic plates over a glossy black
     # leotard, collar, gloves and joints, silver hardware, ice-blue light.
     # ADR-0252: the sheet's primary armour is a pearl silver-white, a little grey, not paper white.
-    "nova": Style(frame=(0.56, 0.565, 0.58), armor=(0.60, 0.605, 0.62), accent=(0.011, 0.011, 0.013),
+    "nova": Style(frame=(0.56, 0.565, 0.58), armor=(0.45, 0.455, 0.47), accent=(0.011, 0.011, 0.013),
                   metal=(0.70, 0.71, 0.74), glow=(0.62, 0.84, 1.0), visor=(0.0020, 0.0030, 0.0050),
                   armor_rough=0.30, frame_rough=0.46, trim_light=0.12),
 }

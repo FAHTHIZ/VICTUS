@@ -348,6 +348,21 @@ def armor_maps(tx, P, N, L: Landmarks, style, kind, cuff, trim, attrs, seed, ton
         pline = pline * 1.0
         h -= pline * 0.0003
         cavity -= pline * 0.2
+    if nova_:
+        pb2, pv2 = cells(P, 0.034, seed + 47)
+        sub = cells(P, 0.075, seed + 41)[1]
+        pl2 = np.exp(-(pb2 / 0.0005) ** 2) * inner * soft(e, 0.014, 0.020) * ((pv2 + sub) % 1.0 < 0.55)
+        h -= pl2 * 0.00010
+        cavity -= pl2 * 0.15
+        col = col * (1 - 0.08 * pl2[:, None])
+        col = col * (1 + 0.05 * (pv_[:, None] - 0.5) * inner[:, None])
+        # Engraved service marks: small recessed rectangles and short dash rows near the seams.
+        mb, mv = cells(P, 0.016, seed + 49)
+        mark = inner * (mv < 0.08) * soft(mb, 0.0018, 0.0024) * (pb_ > 0.004) * (pb_ < 0.014)
+        mring = inner * (mv < 0.08) * np.exp(-((mb - 0.0021) / 0.00035) ** 2) * (pb_ > 0.004) * (pb_ < 0.014)
+        h -= mark * 0.00010 + mring * 0.00012
+        col = col * (1 - 0.18 * mark[:, None] - 0.30 * mring[:, None])
+        cavity -= mring * 0.3
     insert = inner * (pv_ < 0.10) * soft(pb_, 0.0016, 0.0026) * soft(e, 0.024, 0.03) * plate
     h += -pline * 0.0004 - insert * 0.0004
     cavity -= pline * 0.45
@@ -397,6 +412,25 @@ def armor_maps(tx, P, N, L: Landmarks, style, kind, cuff, trim, attrs, seed, ton
         cavity[boot] -= 0.3 * np.exp(-((z - sole_top) / 0.0015) ** 2)
         sole_line = np.exp(-((z - sole_top - 0.006) / 0.0008) ** 2) * (N[boot, 2] > -0.3)
         em[boot] += sole_line[:, None] * glow * 0.8
+        if L.key == "nova":
+            # ADR-0254 (the sheet's boots): black cybernetic side panels slanting back from the
+            # toe, a black heel counter and a black lace panel over the instep, on the pearl shell.
+            Nb = N[boot]
+            yb = Pb[:, 1]
+            sidev = smooth((np.abs(Nb[:, 0]) - 0.35) / 0.25)
+            ph_ = (yb * 0.8 + (z - sole_top)) / 0.045
+            stripe = soft(np.abs((ph_ % 1.0) - 0.5), 0.17, 0.20) * sidev
+            stripe *= soft(z, sole_top + 0.010, sole_top + 0.016) * (1 - soft(z, 0.085, 0.09))
+            topv = smooth((-Nb[:, 1] * 0.6 + Nb[:, 2] - 0.35) / 0.3) * (np.abs(np.abs(Pb[:, 0]) - abs(J["Foot.L"][0][0])) < 0.022)
+            lace = topv * soft(z, sole_top + 0.03, sole_top + 0.035) * (1 - sidev)
+            bk = np.clip(stripe + heel + lace, 0, 1) * white * (1 - sole)
+            if bk.any():
+                blb = techdetail.black_layer(Pb, Nb, J, seed + 760, np.zeros(len(Pb)), accent, metal_c, scale_cell=0.003)
+                col[boot] = col[boot] * (1 - bk[:, None]) + blb["color"] * bk[:, None]
+                rough[boot] = rough[boot] * (1 - bk) + blb["rough"] * bk
+                metal[boot] = np.maximum(metal[boot], blb["metal"] * bk)
+                h[boot] += (blb["height"] - 0.0004) * bk
+                cavity[boot] *= 1 - (1 - blb["cavity"]) * bk
 
     # Machined hardware: ear pods, the back core and the chest emblem.
     hw = pod | core | emblem
@@ -582,14 +616,42 @@ def armor_maps(tx, P, N, L: Landmarks, style, kind, cuff, trim, attrs, seed, ton
         u_, v_, reg_ = coords
         db_, a_, b_, c_, _, _ = techdetail._cells(u_, v_, 0.011, 0.0075, seed + 611, reg_)
         white = (plate | collar) & ~graphite & (cuff < 0.5)
-        reach = 0.002 + 0.010 * c_ ** 2
-        teeth = white * (a_ < 0.24) * (e < reach) * (e > -1)
+        # The sheet's plates dissolve into the black at their edges: stepped clusters at three
+        # scales, their reach varying along each edge (some edges clean, others eaten 3-4 cm
+        # deep), plus sparse black inserts a little further in.
+        wild = smooth((fbm(P, 9, 2, seed + 620) + 0.15) / 0.5)
+        dbA, aA, bA, cA, _, _ = techdetail._cells(u_, v_, 0.024, 0.016, seed + 613, reg_)
+        dbC, aC, bC, cC, _, _ = techdetail._cells(u_, v_, 0.0055, 0.0042, seed + 617, reg_)
+        reachA = (0.006 + 0.032 * cA ** 2) * wild
+        reachB = (0.002 + 0.012 * c_ ** 2) * (0.5 + 0.8 * wild)
+        reachC = (0.003 + 0.010 * cC) * (0.4 + wild)
+        tA = (aA < 0.34) * (e < reachA)
+        tB = (a_ < 0.30) * (e < reachB)
+        tC = (aC < 0.22) * (e < reachC * (0.3 + 0.7 * tA) + 0.006 * tA)
+        isl = (aC > 0.994) * (e > 0.02) * (e < 0.02 + 0.05 * wild)
+        teeth = white * np.clip(tA + tB + tC + isl, 0, 1) * (e > -1)
+        db_ = np.where(tA > 0, np.minimum(dbA, db_), np.where(tC > 0, dbC, db_))
         teeth = teeth * (np.abs(P[:, 2] - vz) > vh + 0.02)  # keep the V and lettering clean
         tsoft = teeth * np.clip(db_ / 0.0006, 0, 1)
         dark = np.clip((graphite & (plate | collar)).astype(float) + teeth, 0, 1)
         front_ = (P[:, 1] < J["Hips"][0][1] - 0.02) & (N[:, 1] < -0.2) & (P[:, 2] > hz - 0.12) & (P[:, 2] < nz_ - 0.15)
         fabric = graphite * front_ * smooth((e - 0.010) / 0.008) * (np.abs(P[:, 0]) < 0.075)
         bl = techdetail.black_layer(P, N, J, seed + 700, fabric, accent, metal_c, coords=coords, scale_cell=0.0030)
+        # ADR-0254: the corset front is tailored - a centre seam and two princess seams curving
+        # in to the waist, each a stitched groove, the panels between them softly domed.
+        if (fabric > 0).any():
+            cz_ = J["Chest"][0][2]
+            wz_ = 0.5 * (hz + cz_)
+            sx_ = 0.040 + 3.0 * (P[:, 2] - wz_) ** 2
+            ax_ = np.abs(P[:, 0])
+            dseam = np.minimum(ax_, np.abs(ax_ - sx_))
+            sg = np.exp(-(dseam / 0.0010) ** 2) * fabric
+            stitch = (np.abs(dseam - 0.0024) < 0.0004) * (np.sin(2 * np.pi * P[:, 2] / 0.003) > 0.3) * fabric
+            dome = smooth(dseam / 0.012) * fabric
+            bl["height"] = bl["height"] - sg * 0.0005 - stitch * 0.00008 + dome * 0.0006
+            bl["color"] = bl["color"] * (1 - 0.5 * sg[:, None]) * (1 + 0.6 * stitch[:, None])
+            bl["cavity"] = bl["cavity"] * (1 - 0.5 * sg)
+            bl["rough"] = bl["rough"] + 0.15 * sg
         col = col * (1 - dark[:, None]) + bl["color"] * dark[:, None]
         rough = rough * (1 - dark) + bl["rough"] * dark
         metal = np.maximum(metal * (1 - dark), bl["metal"] * dark)
