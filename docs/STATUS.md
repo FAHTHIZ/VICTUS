@@ -4091,4 +4091,20 @@ Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, lavapipe, `SDL_VIDEO_DRIV
 - `victus_bench_render --filter sprite`, `sprite_batch/build_upload_20k` p50: 1.60-1.67 ms before, 1.21/1.30/1.35 ms after.
 - Full `ctest -j2 --output-on-failure`: 50/50 passed in 1,003 s.
 - Not verified: physical GPUs, soft shadow penumbrae (masks are hard-edged).
+- Commit: d9aac01.
 - Next task: tilemap camera culling (ADR-0256), then parallel batching.
+
+## 2026-11-24 — Tilemap camera culling (ADR-0256)
+
+Built:
+- `SpriteBatch::view_min()`/`view_max()`: world-space bounds of the view, computed in `begin()` from the inverse view-projection.
+- `extract_sprites` maps the view corners into each tilemap's local plane and draws only cells in that range, padded by one cell and clamped to the int32 key range. Small ranges are looked up directly, wide ranges test each painted cell. Invalid cell sizes or bounds disable culling.
+- Test additions in `gpu: tilemap`: a 100x100 block beside the view adds no sprites; moving the map over it draws 4-25 cells with the expected colour at the centre; zoomed out to scale 0.005 all 10,001 cells draw; erasing the block returns to 1.
+- GAP-19 is done in the audit and ROADMAP.
+
+Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, lavapipe, `SDL_VIDEO_DRIVER=offscreen VICTUS_REQUIRE_GPU=1`):
+- `victus_gpu_tests -tc="gpu: tilemap*"`: 53/53 assertions. `-tc="gpu: 2d light*,gpu: tilemap*,gpu: sprite*,*2d*"`: 355/355 on Vulkan and on GLES.
+- `run_clang_tidy.py` on `scene_rendering.cpp`: no diagnostics.
+- Full `ctest -j2 --output-on-failure`: 49/50 in 1,017 s; the one failure was `perf_budgets` with `sample-platformer` `frame.sprites` = 70 below the old floor of 126 (about 252 before culling). Re-baselined to [35, 77] in `tests/perf/budgets.json`; `ctest -R perf_budgets` then passed.
+- Not verified: a frame-time benchmark for large tilemaps (none exists yet), physical hardware.
+- Next task: parallel sprite and draw batching toward the 1 ms CPU target.

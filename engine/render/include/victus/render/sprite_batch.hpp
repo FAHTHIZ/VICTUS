@@ -89,6 +89,10 @@ public:
     // unless `self_shadow` (then it darkens like the floor behind it).
     void add_shadow_caster(std::span<const math::Vec2> outline, bool self_shadow = false);
     [[nodiscard]] bool lighting() const noexcept { return lighting_; }
+    // World-space bounds of the view (the view-projection's [-1, 1] square at z = 0), set by
+    // begin(), for culling large sprite sources such as tilemaps before they reach the batch.
+    [[nodiscard]] math::Vec2 view_min() const noexcept { return view_min_; }
+    [[nodiscard]] math::Vec2 view_max() const noexcept { return view_max_; }
     void draw(const Sprite& sprite);
     void draw_rect(math::Vec2 center, math::Vec2 size, math::Color color, std::int32_t layer = 0, float rotation = 0);
     void draw_line(math::Vec2 a, math::Vec2 b, float thickness, math::Color color, std::int32_t layer = 0);
@@ -155,6 +159,7 @@ private:
     rhi::BufferHandle vertex_buffer_, index_buffer_;
     std::uint32_t capacity_{0};
     math::Mat4 view_proj_;
+    math::Vec2 view_min_, view_max_;
     bool pixel_art_{false};
     bool target_srgb_{false};
     std::vector<Sprite> sprites_;

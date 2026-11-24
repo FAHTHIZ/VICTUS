@@ -3029,3 +3029,21 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 - Shadow edges are hard, aliased at one pixel.
 - A caster's lit interior also hides shadows cast onto it by other casters. Use `self_shadow` where that matters.
 - The normal buffer costs one RGBA8 target at the frame size, and only in frames that have normal-mapped lit sprites.
+
+### ADR-0256: Tilemap camera culling
+
+**Status:** Accepted (2026-11-24).
+
+**Context:** GAP-19: `extract_sprites` turned every painted tilemap cell into a sprite each frame, whether it was on screen or not. A large map paid sort, vertex and upload costs for cells the camera never sees. Godot and Unity both cull tilemap chunks against the camera.
+
+**Decision:**
+- `SpriteBatch::begin` stores the world-space bounds of the view (`view_min()`, `view_max()`): the four corners of the clip-space square at z = 0, mapped through the inverse view-projection.
+- For each tilemap, the four view corners go through the inverse of the map's world matrix into the map's local plane. Their bounds, divided by the cell size and padded by one cell, give an integer cell range, clamped to the int32 key range.
+- When the range has fewer cells than the map has painted cells, the range is looked up cell by cell in the hash map. Otherwise each painted cell's key is tested against the range. Either way the cost is bounded by the smaller of the view and the map.
+- Non-finite or non-positive cell sizes and non-finite bounds disable culling, so such maps draw as before.
+
+**Consequences:**
+- Off-screen cells cost nothing in sorting, vertex building or upload.
+- The one-cell pad covers rotated tiles and filtering at the edges. Tiles larger than their cell are not supported by the pad.
+- Culling assumes the map lies in the batch's z = 0 plane, as all 2D tilemaps do.
+

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numeric>
 
 namespace victus::render {
@@ -156,6 +157,18 @@ Status SpriteBatch::ensure_capacity(std::uint32_t sprites) {
 void SpriteBatch::begin(const Mat4& view_projection, bool pixel_art) {
     view_proj_ = view_projection;
     pixel_art_ = pixel_art;
+    {
+        const Mat4 inv = inverse(view_projection);
+        const float inf = std::numeric_limits<float>::infinity();
+        view_min_ = {inf, inf};
+        view_max_ = {-inf, -inf};
+        for (const Vec2 c : {Vec2{-1, -1}, Vec2{1, -1}, Vec2{1, 1}, Vec2{-1, 1}}) {
+            const Vec4 w = inv * Vec4(c.x, c.y, 0, 1);
+            const Vec2 p = std::abs(w.w) > 1e-12f ? Vec2{w.x / w.w, w.y / w.w} : Vec2{w.x, w.y};
+            view_min_ = {std::min(view_min_.x, p.x), std::min(view_min_.y, p.y)};
+            view_max_ = {std::max(view_max_.x, p.x), std::max(view_max_.y, p.y)};
+        }
+    }
     sprites_.clear();
     batches_.clear();
     lights_.clear();

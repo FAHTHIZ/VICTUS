@@ -121,6 +121,28 @@ TEST_CASE("gpu: tilemap cells draw their tiles and the tile set hot-reloads") {
     CHECK(channel(test::pixel(f.px, 64, 16, 32), 1) > 200);
     CHECK(channel(test::pixel(f.px, 64, 48, 32), 1) < 20);
 
+    // Camera culling (ADR-0256): a 100x100 block beside the view adds no sprites...
+    for (std::int32_t y = 0; y < 100; ++y)
+        for (std::int32_t x = 5; x < 105; ++x) tilemap::set_tile(*mm, x, y, 1);
+    f = draw(s, cache, "tilemap_culled");
+    CHECK(f.sprites == 1);
+    // ...and moving the map over it draws only the cells around the view (local x ~ [49, 51]).
+    s.world().get<scene::Transform>(e)->position = {-50, -0.5f, 0};
+    f = draw(s, cache, "tilemap_culled_moved");
+    CHECK(f.sprites >= 4);
+    CHECK(f.sprites <= 25);
+    CHECK(channel(test::pixel(f.px, 64, 32, 32), 1) > 200);
+    // A view wider than the painted range tests every cell instead of looking up the range.
+    s.world().get<scene::Transform>(e)->scale = {0.005f, 0.005f, 1};
+    s.world().get<scene::Transform>(e)->position = {0, -0.5f, 0};
+    f = draw(s, cache, "tilemap_culled_zoomed_out");
+    CHECK(f.sprites == 10001);
+    s.world().get<scene::Transform>(e)->scale = {1, 1, 1};
+    for (std::int32_t y = 0; y < 100; ++y)
+        for (std::int32_t x = 5; x < 105; ++x) tilemap::set_tile(*mm, x, y, -1);
+    f = draw(s, cache, "tilemap_edited_again");
+    CHECK(f.sprites == 1);
+
     // Editing the tile set is reported and clears the system's cache.
     CHECK(s.world().get<physics::StaticShapes2DComponent>(e));
     CHECK(reloader.check().empty());

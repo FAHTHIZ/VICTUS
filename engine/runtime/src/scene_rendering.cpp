@@ -2633,8 +2633,46 @@ std::uint32_t extract_sprites(Scene& scene, GpuAssetCache& assets, render::Sprit
             const float rotation = math::to_euler(rot).z;
             const math::Vec2 size{map.cell_size.x * scale.x, map.cell_size.y * scale.y};
             const std::uint32_t tiles = ts.tile_count();
-            for (const auto& [key, cell] : map.cells) {
-                if (cell.tile < 0 || static_cast<std::uint32_t>(cell.tile) >= tiles) continue;
+            // Camera culling (ADR-0256): the view rectangle in the map's local plane gives a cell
+            // range, padded by one cell. Small ranges look cells up directly; otherwise every
+            // painted cell is tested against the range.
+            bool cull = std::isfinite(map.cell_size.x) && std::isfinite(map.cell_size.y) && map.cell_size.x > 0.0f &&
+                        map.cell_size.y > 0.0f;
+            std::int64_t cx0 = 0, cx1 = -1, cy0 = 0, cy1 = -1;
+            if (cull) {
+                const math::Mat4 inv = math::inverse(wt.matrix);
+                const math::Vec2 lo = batch.view_min(), hi = batch.view_max();
+                double lx0 = std::numeric_limits<double>::infinity(), ly0 = lx0, lx1 = -lx0, ly1 = -lx0;
+                for (const math::Vec2 c : {lo, math::Vec2{hi.x, lo.y}, hi, math::Vec2{lo.x, hi.y}}) {
+                    const math::Vec3 q = inv.transform_point({c.x, c.y, 0});
+                    lx0 = std::min(lx0, static_cast<double>(q.x));
+                    lx1 = std::max(lx1, static_cast<double>(q.x));
+                    ly0 = std::min(ly0, static_cast<double>(q.y));
+                    ly1 = std::max(ly1, static_cast<double>(q.y));
+                }
+                constexpr double lim = 2147483647.0;
+                cull = std::isfinite(lx0) && std::isfinite(lx1) && std::isfinite(ly0) && std::isfinite(ly1);
+                if (cull) {
+                    const auto cell_of = [&](double v, float cell) {
+                        return static_cast<std::int64_t>(std::clamp(std::floor(v / cell), -lim, lim));
+                    };
+                    cx0 = cell_of(lx0, map.cell_size.x) - 1;
+                    cx1 = cell_of(lx1, map.cell_size.x) + 1;
+                    cy0 = cell_of(ly0, map.cell_size.y) - 1;
+                    cy1 = cell_of(ly1, map.cell_size.y) + 1;
+                    // Padding may step one past the int32 key range; keep the range representable.
+                    const auto key_range = [](std::int64_t v) {
+                        return std::clamp<std::int64_t>(v, std::numeric_limits<std::int32_t>::min(),
+                                                        std::numeric_limits<std::int32_t>::max());
+                    };
+                    cx0 = key_range(cx0);
+                    cx1 = key_range(cx1);
+                    cy0 = key_range(cy0);
+                    cy1 = key_range(cy1);
+                }
+            }
+            const auto emit = [&](std::uint64_t key, const tilemap::Cell& cell) {
+                if (cell.tile < 0 || static_cast<std::uint32_t>(cell.tile) >= tiles) return;
                 const math::Vec3 local{(static_cast<float>(tilemap::key_x(key)) + 0.5f) * map.cell_size.x,
                                        (static_cast<float>(tilemap::key_y(key)) + 0.5f) * map.cell_size.y, 0.0f};
                 const math::Vec3 p = wt.matrix.transform_point(local);
@@ -2653,6 +2691,22 @@ std::uint32_t extract_sprites(Scene& scene, GpuAssetCache& assets, render::Sprit
                 sp.lit = true;
                 batch.draw(sp);
                 ++count;
+            };
+            const double range = cull ? static_cast<double>(cx1 - cx0 + 1) * static_cast<double>(cy1 - cy0 + 1) : 0.0;
+            if (cull && range < static_cast<double>(map.cells.size())) {
+                for (std::int64_t y = cy0; y <= cy1; ++y)
+                    for (std::int64_t x = cx0; x <= cx1; ++x) {
+                        const std::uint64_t key = tilemap::cell_key(static_cast<std::int32_t>(x), static_cast<std::int32_t>(y));
+                        if (const auto it = map.cells.find(key); it != map.cells.end()) emit(key, it->second);
+                    }
+            } else {
+                for (const auto& [key, cell] : map.cells) {
+                    if (cull) {
+                        const std::int64_t x = tilemap::key_x(key), y = tilemap::key_y(key);
+                        if (x < cx0 || x > cx1 || y < cy0 || y > cy1) continue;
+                    }
+                    emit(key, cell);
+                }
             }
         });
     // 2D particles: one sprite per billboard on the emitter's layer (XY plane, Z ignored).
