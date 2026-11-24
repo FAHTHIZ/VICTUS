@@ -2969,3 +2969,30 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 **Consequences:**
 - The GLB grows from 22.36 MB to 24.17 MB, because the detailed maps compress less.
 - The triangle counts are unchanged: 300,096 in the file, 170,160 drawn with the helmet and 257,824 bare-headed.
+
+### ADR-0254: Nova sheet close-up pass (plate dissolve, knees, boots, tucked bob, face)
+
+**Status:** Accepted (2026-11-24).
+
+**Context:** Review of ADR-0253 against the sheet's close-ups. The plates were too bright, and the white-to-black transition was a clean edge where the sheet breaks it up. The knees were white. The boots were plain. The bob covered the ears, and the face was broad in the lower cheeks.
+
+**Decision:**
+- Plates (`mannequin_materials.py`, `mannequin.py`):
+  - the pearl is greyer (0.45 linear);
+  - the edges dissolve into the black in stepped clusters at three scales (2.4, 1.1 and 0.55 cm cells), with reach that varies along each edge on low-frequency noise;
+  - finer secondary seams, per-panel tone variation and small engraved service marks.
+- Knees (`plates.py`): Nova's kneecap is graphite, so the knee carries the cybernetic layer.
+- Corset: a centre seam and two princess seams curving to the waist, stitched, with softly domed panels between them.
+- Boots: black cybernetic side panels slanting back, a black heel counter and a lace panel over the instep.
+- Bob (`human.py`): each strand in the ear band is rotated about the head axis, blended by height, so the hair passes behind the ear and the face-framing locks stay in front. The scalp shell around the ear is painted as sleek combed hair (`human_materials.py`).
+- Face: slimmer lower cheeks, a defined cheekbone, lifted outer eye corners and a small forward chin point. The skin tone is less saturated.
+
+**Alternatives:**
+- Cutting the bob around the ear with separate card sets would add triangles, and the bare-head set has no headroom left.
+- A per-point azimuth remap looped the crown strands, whose meridians cross the ear band.
+
+**Evidence:** the STATUS.md entry for the commit, `test_pipeline.py` 14/14, and the regenerated review renders.
+
+**Consequences:**
+- The triangle counts are unchanged: 300,096 in the file. Only the hair card positions moved.
+- The GLB is 24.22 MB.

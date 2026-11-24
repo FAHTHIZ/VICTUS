@@ -4030,3 +4030,16 @@ Verified:
 - `docs/images/characters/blender_render_{bodies,heads}.jpg`: the Nova tiles were regenerated.
 - The C++ suites were not run in this pass.
 - Next task: Orion from the same sheet.
+
+## 2026-11-24 — Nova sheet close-up pass (ADR-0254)
+
+Built:
+- Plates: greyer pearl, plate edges dissolving into the black in multi-scale stepped clusters, finer secondary seams and engraved marks.
+- Black cybernetic knee cops, a tailored corset (centre and princess seams), and black panels on the boots.
+- Hair and face: the bob is tucked behind the ears and the scalp there is painted as hair. The face is slimmer, with lifted outer eye corners and a less saturated skin tone.
+
+Verified:
+- Full-quality Nova build: 24.22 MB and 300,096 triangles in 619 s. The arena copy was updated.
+- `tools/characters/test_pipeline.py`: 14/14 passed. `tools/lint/check_docs.py` passes.
+- `docs/images/characters/blender_render_{bodies,heads}.jpg`: the Nova tiles were regenerated.
+- The C++ suites were not run in this pass.

@@ -10,6 +10,7 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 
 ### Added
 
+- Nova closer to the sheet's close-ups (ADR-0254): her pearl plates break up into the black hardware at their edges, the knees are black and mechanical, the corset is tailored, the boots carry black panels, and her bob is tucked behind the ears. ([evidence](docs/STATUS.md#2026-11-24--nova-sheet-close-up-pass-adr-0254))
 - Nova's suit and face carry the sheet's fine detail (ADR-0253): dense black cybernetic hardware under satin pearl plates, black edges biting into the plates, a hex-scale seat and corset, and softer skin with eye liner and blush. ([evidence](docs/STATUS.md#2026-11-24--nova-cybernetic-detail-satin-plates-and-skin-adr-0253))
 - Nova reworked to match the owner's character sheet one-to-one (ADR-0252). She now has:
   - an hourglass figure in pearl silver-white armour over a black undersuit;
