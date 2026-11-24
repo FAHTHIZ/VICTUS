@@ -59,8 +59,9 @@ HEAD_STYLES = {
                        hair=(0.010, 0.008, 0.007), hair_style="crop", stubble=0.8, freckles=0.0, brow_thickness=1.1,
                        hair_rough=0.62),
     # Nova (the sheet's head close-up): fair East Asian skin, dark brown eyes, glossy black bob.
-    "nova": HeadStyle(skin=(0.40, 0.255, 0.18), lips=(0.34, 0.15, 0.13), iris=(0.055, 0.030, 0.016),
-                      hair=(0.0085, 0.0085, 0.0100), hair_style="bob", stubble=0.0, freckles=0.0, brow_thickness=0.78,
+    # (ADR-0252: paler porcelain skin and rosier lips, after the close-up.)
+    "nova": HeadStyle(skin=(0.50, 0.345, 0.265), lips=(0.42, 0.16, 0.15), iris=(0.040, 0.022, 0.012),
+                      hair=(0.0085, 0.0085, 0.0100), hair_style="bob", stubble=0.0, freckles=0.0, brow_thickness=0.90,
                       hair_rough=0.40, hair_anisotropy=0.70, lip_size=0.80),
 }
 
@@ -77,6 +78,11 @@ def _unit(v):
 def _smooth(t):
     t = np.clip(t, 0, 1)
     return t * t * (3 - 2 * t)
+
+
+def _band(x, x0, x1, x2, x3):
+    """1 between x1 and x2, easing to 0 at x0 and x3."""
+    return _smooth((x - x0) / (x1 - x0)) * (1.0 - _smooth((x - x2) / (x3 - x2)))
 
 
 def collar_top(J):
@@ -117,6 +123,7 @@ class NovaSculpt:
         self.eye_z = 0.5 * (self.eyes[0][2] + self.eyes[1][2])
         self.nose_z = self.mz + 0.34 * (self.eye_z - self.mz)  # base of the nose
         self.chin_z = float(v[(np.abs(v[:, 0]) < 0.01) & (v[:, 1] < self.my + 0.03), 2].min())
+        self.nose_y = float(v[(np.abs(v[:, 0]) < 0.01) & (np.abs(v[:, 2] - self.nose_z - 0.01) < 0.01), 1].min())
 
     def eyes_only(self, v):
         d = v.copy()
@@ -133,9 +140,10 @@ class NovaSculpt:
         # Lips: squeeze toward the lip line, narrow toward the centre, ease the pout back.
         dx, dz, dy = v[:, 0] / 0.030, (v[:, 2] - mz) / 0.016, (v[:, 1] - my) / 0.022
         w = np.exp(-(dx ** 2 + dz ** 2 + dy ** 2) * 1.5)
-        d[:, 2] += (v[:, 2] - mz) * (-0.45 * w)
-        d[:, 0] += v[:, 0] * (-0.22 * w)
-        d[:, 1] += 0.0040 * w * np.clip(1 - dy, 0, 1)
+        # (ADR-0252: the sheet's lips are soft and full, so the squeeze is gentle.)
+        d[:, 2] += (v[:, 2] - mz) * (-0.12 * w)
+        d[:, 0] += v[:, 0] * (-0.14 * w)
+        d[:, 1] -= 0.0012 * w * np.clip(1 - dy, 0, 1)
         # Shorter lower face: lift everything between the nose base and the chin (and the
         # underside of the jaw with it), 9 % of the nose-to-chin height at the chin.
         span = self.nose_z - self.chin_z
@@ -146,12 +154,31 @@ class NovaSculpt:
         # Jaw: narrow the lower face toward the chin (a soft V).
         below = _smooth((mz + 0.012 - v[:, 2]) / 0.05) * (v[:, 2] > self.chin_z - 0.06)
         d[:, 0] -= v[:, 0] * (0.09 * below * front)
+        # Nose (ADR-0252): a higher, finer bridge between the eyes and down the dorsum, and a
+        # slightly narrower tip.
+        ny = self.nose_y
+        bridge = np.exp(-(v[:, 0] / 0.009) ** 2) * _band(v[:, 2], self.nose_z + 0.004, self.nose_z + 0.016,
+                                                         self.eye_z + 0.002, self.eye_z + 0.016)
+        d[:, 1] -= 0.0022 * bridge * _smooth((ny + 0.03 - v[:, 1]) / 0.02)
+        tip = np.exp(-((v[:, 2] - self.nose_z - 0.008) / 0.012) ** 2) * _smooth((ny + 0.022 - v[:, 1]) / 0.012)
+        d[:, 0] -= v[:, 0] * (0.10 * tip * (np.abs(v[:, 0]) < 0.03))
+        return d
+
+    def lids(self, v):
+        """Opens the eyes (skin and lashes only; the eyeballs keep their shape): the lid aperture
+        stretched vertically about each eye's centre line, the upper lid most."""
+        d = v.copy()
+        for e in self.eyes:
+            dz = v[:, 2] - e[2]
+            w = (_smooth((0.020 - np.abs(v[:, 0] - e[0])) / 0.008) * _smooth((0.016 - np.abs(dz)) / 0.008)
+                 * _smooth((e[1] + 0.004 - v[:, 1]) / 0.008))
+            d[:, 2] += dz * np.where(dz > 0, 0.30, 0.16) * w
         return d
 
 
 def sculpt_nova(skin: Part, eye: Part, mouth: Part, J):
     f = NovaSculpt(skin, mouth, J)
-    skin.q.v[:] = f(skin.q.v)
+    skin.q.v[:] = f.lids(f(skin.q.v))
     skin.attrs["rest"] = skin.q.v.copy()
     eye.q.v[:] = f(eye.q.v)
     eye.attrs["rest"] = eye.q.v.copy()
@@ -220,7 +247,11 @@ def bob_strands(env: Envelope, J, chin_z, seed=3):
     pole = _unit([0.0, 0.32, 1.0])  # the crown whorl, a little behind the top of the head
     ear_top = ez + 0.010
     # Closer to the scalp than a helmet-like bowl (the sheet's bob is soft and sleek on top).
-    layers = ((0.0110, 132, 0.005, 0.0120), (0.0078, 104, 0.30, 0.0115), (0.0048, 84, 0.55, 0.0110))
+    # ADR-0252: fuller at the crown and the back (the sheet's rounded bob), and denser.
+    layers = ((0.0150, 168, 0.005, 0.0115), (0.0110, 132, 0.30, 0.0110), (0.0068, 100, 0.55, 0.0105))
+    # Side part on her left (+X): the fringe and the front of the crown radiate from a parting
+    # forward and to the left of the whorl, so they sweep across the forehead to her right.
+    part_pole = _unit([0.24, -0.06, 1.0])
     out = []
 
     def cut_z(az):
@@ -229,10 +260,14 @@ def bob_strands(env: Envelope, J, chin_z, seed=3):
         # Bangs to the brows (a little longer toward the temples), face-framing locks to the jaw,
         # the bob to the chin all round, a touch shorter at the nape.
         # (Side-swept: a little longer toward her right.)
-        bang = ez + 0.007 - 0.008 * (a / 50.0) ** 2 - 0.007 * np.clip(-sa / 50.0, -1, 1)
-        lock = chin_z + 0.016
-        side = chin_z + 0.002
-        back = chin_z + 0.014
+        # ADR-0252 (the sheet's close-ups): a long swept fringe, to the lashes at the centre and
+        # past the eye on her right (-X), shorter toward the parting; face-framing locks past the
+        # jaw; a graduated A-line hem rising toward the nape.
+        bang = ez + 0.003 - 0.006 * (a / 50.0) ** 2 + 0.010 * np.clip(sa / 50.0, -1, 1) * (sa > 0) \
+            - 0.014 * np.clip(-sa / 50.0, 0, 1)
+        lock = chin_z - 0.004
+        side = chin_z + 0.010
+        back = chin_z + 0.040
         z = np.where(a < 46, bang,
                      np.where(a < 56, bang + (lock - bang) * _smooth((a - 46) / 10.0),
                               np.where(a < 120, lock + (side - lock) * _smooth((a - 56) / 40.0),
@@ -248,7 +283,7 @@ def bob_strands(env: Envelope, J, chin_z, seed=3):
     def chop(az):
         return float((camp * np.sin(ks * az + cph)).sum())
 
-    def meridian(az, off, th0):
+    def meridian(az, off, th0, pole=pole):
         w = _az_dir(np.array(az))
         w = _unit(w - pole * (w @ pole))
         th = np.radians(np.linspace(th0, 150.0, 160))
@@ -277,7 +312,12 @@ def bob_strands(env: Envelope, J, chin_z, seed=3):
         for a in az:
             a_deg = abs(np.degrees(a))
             th0 = 4.0 + 6.0 * rng.random() + th_frac * (40.0 if a_deg > 50 else 22.0)
-            M = meridian(a, off + rng.normal(0, 0.0012), th0)
+            # Front strands start from the parting (blended into the whorl toward the sides).
+            pb = _smooth((75.0 - a_deg) / 30.0)
+            pl = _unit(pole * (1 - pb) + part_pole * pb)
+            # Volume: the outer layer stands further off over the crown and the back.
+            lift = 0.004 * _smooth((a_deg - 60.0) / 60.0) * (li == 0)
+            M = meridian(a, off + lift + rng.normal(0, 0.0012), th0 * (1 - 0.6 * pb), pl)
             rel = M - c
             rho = np.linalg.norm(rel[:, :2], axis=1)
             zc = cut_z(np.array(a)) + rng.normal(0, 0.0055 if a_deg < 50 else 0.0035) + chop(a) * (0.8 if a_deg < 50 else 1.0)
@@ -329,10 +369,12 @@ def bob_strands(env: Envelope, J, chin_z, seed=3):
             # hair does not read as combed into one shell.
             tang = _az_dir(np.array(a) + np.pi / 2)
             P = P + tang[None] * (rng.normal(0, 0.0026) * t ** 2)[:, None]
-            if a_deg < 50:
-                # The fringe sweeps toward her right (-X), most at the centre.
-                sweep = 0.011 * (1 - (a_deg / 50.0) ** 2)
-                P = P + np.array([-1.0, 0.0, 0.0])[None] * (sweep * t ** 2)[:, None]
+            if a_deg < 60:
+                # The fringe sweeps toward her right (-X), most at the centre and on the parting
+                # side, and its tips lift a little off the brow.
+                sweep = 0.024 * (1 - (a_deg / 60.0) ** 2) * (0.75 if a > 0 else 1.0)
+                P = P + np.array([-1.0, 0.0, 0.0])[None] * (sweep * t ** 1.6)[:, None]
+                P = P + np.array([0.0, -1.0, 0.0])[None] * (0.002 * t ** 2)[:, None]
             # Narrower fringe pieces, so gaps show between them (the sheet's wispy bangs).
             wf = 0.78 if a_deg < 46 and li == 0 else 1.0
             out.append((P, li, width * wf * (0.9 + 0.25 * rng.random()), a, t))
@@ -361,6 +403,8 @@ def strand_cards(strands, env: Envelope, seed=5):
             nrm = -nrm
         # Narrow at the crown, where every strand converges.
         w = width * (0.35 + 0.65 * _smooth(t / 0.3))
+        # Piecey, pointed ends (ADR-0252): every card tapers over its last fifth.
+        w = w * (1.0 - 0.65 * _smooth((t - 0.78) / 0.22))
         rows = []
         for j in range(across):
             s = j / (across - 1) - 0.5
@@ -483,7 +527,7 @@ def build(body: fit.Body, head, face_shapes):
     if sculpt is not None:  # brows and lashes follow the eyes
         k = np.rint(hair.attrs["kind"][:, 0])
         m = (k == 1) | (k == 2)
-        hair.q.v[m] = sculpt.eyes_only(hair.q.v[m])
+        hair.q.v[m] = sculpt.lids(sculpt.eyes_only(hair.q.v[m]))
         if "rest" in hair.attrs:
             hair.attrs["rest"] = hair.q.v.copy()
     return [skin, eye, hair], hs, L
