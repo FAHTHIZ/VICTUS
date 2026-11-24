@@ -19,6 +19,7 @@ import numpy as np
 
 import fit
 import suit
+import techdetail
 from bake import band, dist_to, fbm, soft, worley
 
 
@@ -246,10 +247,18 @@ def frame_maps(tx, P, N, L: Landmarks, style, kind, seed):
         cavity[head] = 1 - 0.5 * seam
 
     if L.key == "nova":
+        # The sheet's black under-layer (ADR-0252): cybernetic hard-surface detail over the
+        # shoulders, arms, flanks, back and knees, glossy micro-scales over the seat and the
+        # top of the inner thigh (below the waist).
         dk = _nova_black(P, J, L, zone_any) * body
-        black = np.array(style.accent) * (1.0 + 0.05 * mottle[:, None])
-        col = col * (1 - dk[:, None]) + black * dk[:, None]
-        rough = rough * (1 - dk) + (0.30 + 0.08 * (1 - ribs)) * dk
+        hz = J["Hips"][0][2]
+        fabric = soft(P[:, 2] - (hz + 0.03), 0.0, 0.04) * (1 - zone_any)
+        bl = techdetail.black_layer(P, N, J, seed + 500, fabric, style.accent, style.metal)
+        col = col * (1 - dk[:, None]) + bl["color"] * dk[:, None]
+        rough = rough * (1 - dk) + bl["rough"] * dk
+        metal = np.maximum(metal * (1 - dk), bl["metal"] * dk)
+        h = h * (1 - dk) + (bl["height"] + 0.4 * zb * (ribs ** 1.5 * 0.0006 - 0.0002)) * dk
+        cavity = cavity * (1 - dk) + bl["cavity"] * dk
         em *= (1 - dk[:, None])
 
     rough += 0.04 * mottle
@@ -332,8 +341,13 @@ def armor_maps(tx, P, N, L: Landmarks, style, kind, cuff, trim, attrs, seed, ton
     # Panel lines on the larger white plates: a few recessed seams splitting each plate into
     # moulded sections, small graphite inserts and fasteners near the seams.
     inner = (plate | helmet) & (e > 0.018) & (cuff < 0.5) & ~graphite
-    pb_, pv_ = cells(P, 0.12, seed + 41)
-    pline = np.exp(-(pb_ / 0.0006) ** 2) * inner * soft(e, 0.018, 0.026)
+    nova_ = L.key == "nova"
+    pb_, pv_ = cells(P, 0.075 if nova_ else 0.12, seed + 41)
+    pline = np.exp(-(pb_ / (0.0008 if nova_ else 0.0006)) ** 2) * inner * soft(e, 0.018, 0.026)
+    if nova_:
+        pline = pline * 1.0
+        h -= pline * 0.0003
+        cavity -= pline * 0.2
     insert = inner * (pv_ < 0.10) * soft(pb_, 0.0016, 0.0026) * soft(e, 0.024, 0.03) * plate
     h += -pline * 0.0004 - insert * 0.0004
     cavity -= pline * 0.45
@@ -557,6 +571,32 @@ def armor_maps(tx, P, N, L: Landmarks, style, kind, cuff, trim, attrs, seed, ton
             tm[tsel] = soft(dmin, 0.00085 - 0.0004, 0.00085)
             col = col * (1 - tm[:, None]) + accent * tm[:, None]
             rough = rough * (1 - tm) + 0.3 * tm
+
+    if L.key == "nova":
+        # The sheet's Nova (ADR-0252): every graphite piece (corset, spine, lames, knee and elbow
+        # cops, forearm inserts, collar) carries the cybernetic hard-surface layer, the corset
+        # front glossy micro-scales inside a mechanical border; the black bites into the pearl
+        # plates' edges in jagged teeth.
+        hz, nz_ = J["Hips"][0][2], J["Neck"][0][2]
+        coords = techdetail.surface_coords(P, N, J)
+        u_, v_, reg_ = coords
+        db_, a_, b_, c_, _, _ = techdetail._cells(u_, v_, 0.011, 0.0075, seed + 611, reg_)
+        white = (plate | collar) & ~graphite & (cuff < 0.5)
+        reach = 0.002 + 0.010 * c_ ** 2
+        teeth = white * (a_ < 0.24) * (e < reach) * (e > -1)
+        teeth = teeth * (np.abs(P[:, 2] - vz) > vh + 0.02)  # keep the V and lettering clean
+        tsoft = teeth * np.clip(db_ / 0.0006, 0, 1)
+        dark = np.clip((graphite & (plate | collar)).astype(float) + teeth, 0, 1)
+        front_ = (P[:, 1] < J["Hips"][0][1] - 0.02) & (N[:, 1] < -0.2) & (P[:, 2] > hz - 0.12) & (P[:, 2] < nz_ - 0.15)
+        fabric = graphite * front_ * smooth((e - 0.010) / 0.008) * (np.abs(P[:, 0]) < 0.075)
+        bl = techdetail.black_layer(P, N, J, seed + 700, fabric, accent, metal_c, coords=coords, scale_cell=0.0030)
+        col = col * (1 - dark[:, None]) + bl["color"] * dark[:, None]
+        rough = rough * (1 - dark) + bl["rough"] * dark
+        metal = np.maximum(metal * (1 - dark), bl["metal"] * dark)
+        h = h * (1 - dark) + (bl["height"] - 0.0005 * teeth) * dark
+        h -= np.exp(-(db_ / 0.0004) ** 2) * teeth * 0.0003
+        cavity = cavity * (1 - dark) + bl["cavity"] * dark * (1 - 0.4 * teeth * (1 - tsoft))
+        em *= (1 - dark[:, None])
 
     # Ceramic micro-surface: faint orange peel in the clear coat, slight roughness variation.
     h += shell * fine * 0.000004
