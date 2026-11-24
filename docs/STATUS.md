@@ -4107,4 +4107,19 @@ Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, lavapipe, `SDL_VIDEO_DRIV
 - `run_clang_tidy.py` on `scene_rendering.cpp`: no diagnostics.
 - Full `ctest -j2 --output-on-failure`: 49/50 in 1,017 s; the one failure was `perf_budgets` with `sample-platformer` `frame.sprites` = 70 below the old floor of 126 (about 252 before culling). Re-baselined to [35, 77] in `tests/perf/budgets.json`; `ctest -R perf_budgets` then passed.
 - Not verified: a frame-time benchmark for large tilemaps (none exists yet), physical hardware.
+- Commit: a04b02f.
 - Next task: parallel sprite and draw batching toward the 1 ms CPU target.
+
+## 2026-11-24 — Reused material for plain renderers (ADR-0257)
+
+Built:
+- `extract_scene`: primitive renderers without a material asset share one reused `render::Material`. Only the renderer's own fields and the override-writable fields are rewritten.
+- Test: the MaterialOverrides GPU test adds a black plain plane in a later archetype after the emissive-overridden floor and checks the plane stays dark.
+
+Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, lavapipe, `SDL_VIDEO_DRIVER=offscreen VICTUS_REQUIRE_GPU=1`):
+- Profile: `perf record` on `victus_bench_runtime --reps 300 --filter retained`, with `scene_rendering.cpp` and `scene_renderer.cpp` rebuilt with `-g`. The per-renderer lambda's hottest instruction (about 40% of its samples) was a `rep stos` zeroing 312 bytes, the `Material` value-initialisation.
+- `victus_bench_runtime --reps 20 --filter retained`: before, extract 0.711 ms, total 1.139 ms. After, 8 runs: extract 0.585/0.579/0.585/0.610/0.593/0.644/0.648/0.584 ms, total 0.989/0.978/1.005/1.026/1.008/1.108/1.067/1.001 ms. Transforms (about 0.09-0.12 ms) and render (about 0.31-0.35 ms) are unchanged.
+- `victus_gpu_tests -tc="gpu: MaterialOverrides*,gpu: material*"`: 107/107 assertions. With the emissive reset removed, the new check fails (`dark` = 0), so it catches a leak.
+- Full `ctest -j2 --output-on-failure`: 50/50 passed in 1,029 s.
+- Not verified: the 1 ms accept target holds in every run (it does in some, not in others), physical hardware.
+- Next task: cheaper retained-record checks in `submit_static`, then parallel batching.

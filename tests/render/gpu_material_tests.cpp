@@ -374,6 +374,21 @@ TEST_CASE("gpu: MaterialOverrides offset, scroll and emissive adjust one entity'
     (void)scanline(s, cache, centre);
     CHECK(channel(centre, 2) > dark_blue + 100);
     CHECK(channel(centre, 2) > channel(centre, 0) + 100);
+
+    // A plain black renderer extracted after the overridden floor (a later archetype, through the
+    // tag) must not inherit the floor's emissive: plain renderers share one reused Material.
+    const Entity patch = s.scene.create("Patch");
+    s.scene.world().get<Transform>(patch)->position = {-2, 0.01f, 0};
+    s.scene.world().get<Transform>(patch)->scale = {3, 1, 6};
+    auto& pmr = s.scene.world().add<MeshRendererComponent>(patch);
+    pmr.primitive = "plane";
+    pmr.base_color = {0, 0, 0, 1};
+    s.scene.world().add<TransientComponent>(patch);
+    const auto patched = scanline(s, cache, centre);
+    CHECK(channel(centre, 2) > dark_blue + 100); // the floor keeps its override
+    int dark = 0; // about 75 on the patch (bloom from the glowing floor) against about 245
+    for (const std::uint32_t p : patched) dark += channel(p, 2) * 2 < channel(centre, 2);
+    CHECK(dark >= 20);
     cache.clear();
 }
 

@@ -3047,3 +3047,18 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 - The one-cell pad covers rotated tiles and filtering at the edges. Tiles larger than their cell are not supported by the pad.
 - Culling assumes the map lies in the batch's z = 0 plane, as all 2D tilemaps do.
 
+### ADR-0257: Reused material for plain renderers in extraction
+
+**Status:** Accepted (2026-11-24).
+
+**Context:** CPU frame plan (ROADMAP): the 10,000-cube retained benchmark spent about 0.71 ms in `extract_scene`. A line-level profile (perf with `-g` objects) put about 40% of the per-renderer lambda's samples on one `rep stos`: value-initialising a fresh 312-byte `render::Material` for every renderer. That happened before the retained-record check found the renderer unchanged.
+
+**Decision:**
+- `extract_scene` keeps one `plain_material` for the whole extraction. A primitive renderer without a material asset rewrites only the fields it sets (`base_color`, `metallic`, `roughness`, `cast_shadows`) and resets the fields `MaterialOverridesComponent` may change (`uv_offset`, `emissive`, `emissive_strength`) to their defaults, then applies its own overrides.
+- Renderers with a material asset, model meshes and procedural meshes still build their own Material, because they copy whole asset materials.
+- `SceneRenderer` copies or compares the material during the call, so reusing the object between calls is safe.
+
+**Consequences:**
+- Extraction of the 10,000-cube scene drops from about 0.71 ms to 0.58-0.65 ms.
+- A new field that `MaterialOverridesComponent` writes must also be reset in `plain()`. The MaterialOverrides GPU test draws a plain renderer after an overridden one and fails if the emissive override leaks.
+

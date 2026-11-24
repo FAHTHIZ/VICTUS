@@ -2108,6 +2108,22 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
             m.emissive_strength = o->emissive_strength;
         }
     };
+    // Renderers without a material asset reuse one Material and rewrite only the fields they
+    // set (and the fields MaterialOverrides may have changed): value-initialising a fresh
+    // 312-byte Material per renderer was the largest single cost of extraction.
+    const render::Material default_material{};
+    render::Material plain_material = default_material;
+    const auto plain = [&](const MeshRendererComponent& mr) -> render::Material& {
+        render::Material& m = plain_material;
+        m.base_color = mr.base_color;
+        m.metallic = mr.metallic;
+        m.roughness = mr.roughness;
+        m.cast_shadows = mr.cast_shadows;
+        m.uv_offset = default_material.uv_offset;
+        m.emissive = default_material.emissive;
+        m.emissive_strength = default_material.emissive_strength;
+        return m;
+    };
     const auto draw_renderer = [&](Entity entity, std::size_t row, const MeshRendererComponent& mr, const WorldTransform& wt) {
         if (!mr.visible) return;
         const std::uint64_t motion_id = entity.bits() + 1; // stable per entity; never 0 for live entities
@@ -2293,6 +2309,13 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
         const render::GpuMesh* mesh = last_primitive_mesh;
         if (!mesh) {
             ++stats.missing_assets;
+            return;
+        }
+        if (mr.material_asset.is_nil()) {
+            render::Material& pm_material = plain(mr);
+            apply_row_overrides(overrides, pm_material);
+            emit(*mesh, pm_material);
+            ++stats.meshes;
             return;
         }
         render::Material m;
