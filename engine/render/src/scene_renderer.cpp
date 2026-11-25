@@ -332,8 +332,10 @@ struct WaterUniforms {
     Vec4 wave_a[4], wave_b[4];
     Mat4 view_proj; // ADR-0196: projects reflected rays into the depth buffer
     Vec4 ssr;       // x steps (0 = off), y max distance, z thickness, w intensity
+    Mat4 planar_vp; // ADR-0260: world -> planar reflection clip
+    Vec4 planar;    // x this surface samples the planar reflection, y wave distortion
 };
-static_assert(sizeof(WaterUniforms) == 2 * 64 + 22 * 16);
+static_assert(sizeof(WaterUniforms) == 3 * 64 + 23 * 16);
 struct BloomDownUniforms {
     Vec4 params;
     Vec4 threshold;
@@ -348,6 +350,17 @@ struct PostUniforms {
 struct AlphaTestUniforms {
     Vec4 uv, params;
 };
+// Culling bounds of a water surface: its rest rectangle grown by the waves' reach.
+Aabb water_bounds(const WaterSurface& w) noexcept {
+    float amp = 0;
+    for (const WaterWave& wave : w.waves) amp += std::abs(wave.amplitude) * (1.0f + std::abs(wave.q));
+    return {{w.center.x - w.half_extent.x - amp, w.center.y - amp, w.center.z - w.half_extent.y - amp},
+            {w.center.x + w.half_extent.x + amp, w.center.y + amp, w.center.z + w.half_extent.y + amp}};
+}
+float distance_to(const Aabb& box, Vec3 c) noexcept {
+    const Vec3 nearest{std::clamp(c.x, box.min.x, box.max.x), std::clamp(c.y, box.min.y, box.max.y), std::clamp(c.z, box.min.z, box.max.z)};
+    return length(nearest - c);
+}
 // ADR-0067: casters drawn with the alpha-tested shadow pipeline.
 bool shadow_alpha_tested(const Material& m) noexcept { return m.alpha_cutoff > 0.0f && static_cast<bool>(m.base_color_texture); }
 // Shadow batches merge draws of one mesh across materials; vertex functions must match too.
@@ -585,6 +598,8 @@ struct SceneRenderer::FrameScratch {
     std::vector<Batch> vertex_motion_batches; // buffer empty = vertex_motion_buffer_
     std::vector<InstanceData> instances;
     std::vector<Batch> main_batches, transparent_batches;
+    std::vector<const Draw*> reflected; // ADR-0260: opaque draws in the planar water reflection
+    std::vector<Batch> reflected_batches;
     std::array<std::vector<Batch>, 4> shadow_batches;
     std::vector<const Draw*> rain_casters;
     std::vector<Batch> rain_batches;
@@ -609,6 +624,8 @@ struct SceneRenderer::FrameScratch {
         instances.clear();
         main_batches.clear();
         transparent_batches.clear();
+        reflected.clear();
+        reflected_batches.clear();
         for (auto& b : shadow_batches) b.clear();
         rain_casters.clear();
         rain_batches.clear();
@@ -731,6 +748,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.volumetric_clouds = false;
         s.max_decals = 128;
         s.max_water_surfaces = 4;
+        s.planar_reflections = false;
         s.max_particles = 16384;
         s.max_precipitation = 2048;
         s.precipitation_occlusion = 256;
@@ -762,6 +780,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.cloud_light_steps = 4;
         s.max_decals = 256;
         s.max_water_surfaces = 8;
+        s.planar_reflections = false;
         s.max_particles = 65536;
         s.max_precipitation = 8192;
         s.precipitation_occlusion = 512;
@@ -774,6 +793,7 @@ RenderSettings RenderSettings::preset(QualityTier tier) noexcept {
         s.ssao_samples = 16;
         s.contact_shadow_steps = 16;
         s.ssr_steps = 48;
+        s.planar_reflection_scale = 1.0f;
         s.bloom_levels = 6;
         s.max_point_lights = 1024;
         s.lod_error_pixels = 0.5f;
@@ -806,6 +826,8 @@ RenderSettings RenderSettings::sanitized() const noexcept {
     s.ssr_max_distance = std::isfinite(s.ssr_max_distance) ? std::clamp(s.ssr_max_distance, 1.0f, 500.0f) : 60.0f;
     s.ssr_thickness = std::isfinite(s.ssr_thickness) ? std::clamp(s.ssr_thickness, 0.01f, 10.0f) : 0.3f;
     s.ssr_max_roughness = std::isfinite(s.ssr_max_roughness) ? std::clamp(s.ssr_max_roughness, 0.0f, 1.0f) : 0.5f;
+    s.planar_reflection_scale =
+        std::isfinite(s.planar_reflection_scale) ? std::clamp(s.planar_reflection_scale, 0.25f, 1.0f) : 0.5f;
     s.bloom_levels = std::clamp(s.bloom_levels, 1u, 8u);
     s.sharpen = std::isfinite(s.sharpen) ? std::clamp(s.sharpen, 0.0f, 1.0f) : 0.0f;
     s.upscale_mip_bias = std::isfinite(s.upscale_mip_bias) ? std::clamp(s.upscale_mip_bias, -2.0f, 0.0f) : 0.0f;
@@ -863,6 +885,41 @@ Camera3D Camera3D::from_transform(Vec3 position, Quat rotation) {
 Mat4 Camera3D::projection(float aspect) const noexcept { return Mat4::perspective(fov_y, aspect, z_near, z_far); }
 
 Vec3 Camera3D::forward() const noexcept { return normalize(inverse(view).transform_vector({0, 0, -1})); }
+
+Mat4 oblique_near_plane(const Mat4& projection, Vec4 view_plane) noexcept {
+    // Lengyel, "Oblique View Frustum Depth Projection and Clipping" (2005), [0, 1] depth: the far
+    // corner q opposite the plane keeps depth 1, the plane itself becomes depth 0.
+    const auto sgn = [](float v) { return v > 0.0f ? 1.0f : (v < 0.0f ? -1.0f : 0.0f); };
+    const Vec4 q = inverse(projection) * Vec4{sgn(view_plane.x), sgn(view_plane.y), 1.0f, 1.0f};
+    const float d = dot(view_plane, q);
+    if (!(std::fabs(d) > 1e-20f) || !std::isfinite(d)) return projection;
+    const Vec4 c = view_plane * (1.0f / d);
+    Mat4 m = projection;
+    m.c[0].z = c.x;
+    m.c[1].z = c.y;
+    m.c[2].z = c.z;
+    m.c[3].z = c.w;
+    return m;
+}
+
+PlanarReflectionView planar_reflection_view(const Camera3D& camera, float aspect, float height) noexcept {
+    Mat4 mirror; // reflection about y = height
+    mirror.c[1].y = -1.0f;
+    mirror.c[3].y = 2.0f * height;
+    const Mat4 view = camera.view * mirror;
+    const Vec4 view_plane = transpose(inverse(view)) * Vec4{0.0f, 1.0f, 0.0f, -height};
+    Mat4 flip; // clip y negated: undoes the mirror's change of winding
+    flip.c[1].y = -1.0f;
+    const Mat4 proj = camera.projection(aspect);
+    PlanarReflectionView v;
+    v.view_proj = flip * oblique_near_plane(proj, view_plane) * view;
+    v.sky_view_proj = flip * proj * view;
+    v.position = {camera.position.x, 2.0f * height - camera.position.y, camera.position.z};
+    const Vec3 f = camera.forward();
+    v.forward = {f.x, -f.y, f.z};
+    v.height = height;
+    return v;
+}
 
 Result<std::unique_ptr<SceneRenderer>> SceneRenderer::create(GpuContext& ctx, const SceneRendererOptions& options) {
     std::unique_ptr<SceneRenderer> r(new SceneRenderer(ctx));
@@ -2776,6 +2833,28 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     const Mat4 proj_unjittered = camera_.projection(aspect);
     const Mat4 view_proj_unjittered = proj_unjittered * camera_.view;
     const Frustum frustum = Frustum::from_matrix(view_proj_unjittered);
+    // Planar reflection (ADR-0260): the nearest water surface in view that allows one and that the
+    // camera is above. Chosen before visibility, which also culls draws against the mirrored view.
+    std::optional<PlanarReflectionView> planar;
+    Frustum planar_frustum{};
+    if (S.planar_reflections && !capture_mode_ && S.debug_view == DebugView::None && !waters_.empty()) {
+        float best = std::numeric_limits<float>::max();
+        const WaterSurface* pick = nullptr;
+        for (const WaterSurface& w : waters_) {
+            if (!w.planar_reflection || camera_.position.y <= w.center.y + 0.01f) continue;
+            const Aabb box = water_bounds(w);
+            if (!frustum.intersects(box)) continue;
+            const float dist = distance_to(box, camera_.position);
+            if (dist < best) {
+                best = dist;
+                pick = &w;
+            }
+        }
+        if (pick) {
+            planar = planar_reflection_view(camera_, aspect, pick->center.y);
+            planar_frustum = Frustum::from_matrix(planar->view_proj);
+        }
+    }
     // TAA: every 3D pass renders with a sub-pixel jittered projection.
     // ADR-0188: tiers without TAA switch to temporal upscaling at low render scales, where it
     // beats MSAA + FXAA; the 0.05 hysteresis keeps dynamic resolution from toggling it each frame.
@@ -3074,7 +3153,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             r.rain = rain_occlusion && !blended && rain_frustum.intersects(world);
             if (d.material->shadow_only) continue; // casts, never drawn
             r.in_view = frustum.intersects(world);
-            if (!r.in_view) continue;
+            r.reflected = planar && !blended && world.max.y > planar->height && planar_frustum.intersects(world);
+            if (!r.in_view && !r.reflected) continue;
             const Vec3 c = world.center();
             d.distance = length(c - camera_.position);
             d.probe = -1;
@@ -3109,6 +3189,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         }
         if (r.rain) F.rain_casters.push_back(&d);
         if (d.material->shadow_only) continue; // casts, never drawn
+        if (r.reflected) F.reflected.push_back(&d);
         if (!r.in_view) {
             ++stats_.culled;
             continue;
@@ -3156,7 +3237,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     // order, which GPU occlusion culling relies on (ADR-0162). Then pipeline state, texture,
     // batch, LOD, fade, probe; clusters of one group in buffer order so neighbours merge into
     // one draw; front to back.
-    sort_draws(visible, sort_scratch_, [](const Draw& d, SortState& k) {
+    const auto opaque_key = [](const Draw& d, SortState& k) {
         k[0] = (std::uint64_t{d.group >= 0} << 32) | d.material->surface_shader.index;
         k[1] = (std::uint64_t{d.material->double_sided} << 32) | d.material->base_color_texture.index;
         k[2] = d.batch_key;
@@ -3165,7 +3246,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         // Group draws never share a state with per-frame ones (k[0]), and one group's clusters
         // are distinct, so the tail is the cluster's buffer position or the distance.
         return d.group >= 0 ? d.cluster_first : float_key(d.distance);
-    });
+    };
+    sort_draws(visible, sort_scratch_, opaque_key);
+    if (planar) sort_draws(F.reflected, sort_scratch_, opaque_key);
     stats_.visible = static_cast<std::uint32_t>(visible.size());
 
     {
@@ -3400,6 +3483,8 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     const std::vector<Batch>& transparent_batches = F.transparent_batches;
     build_batches(visible, true, F.main_batches);
     build_batches(transparent, true, F.transparent_batches);
+    build_batches(F.reflected, true, F.reflected_batches);
+    stats_.planar_reflection_draws = planar ? static_cast<std::uint32_t>(F.reflected.size()) : 0u;
     stats_.transparent_draws = static_cast<std::uint32_t>(transparent.size());
     auto& shadow_batches = F.shadow_batches;
     for (std::uint32_t c = 0; c < cascade_count_; ++c) {
@@ -4084,15 +4169,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     {
         std::vector<std::pair<float, const WaterSurface*>> candidates;
         for (const WaterSurface& w : waters_) {
-            float amp = 0;
-            for (const WaterWave& wave : w.waves) amp += std::abs(wave.amplitude) * (1.0f + std::abs(wave.q));
-            const Aabb box{{w.center.x - w.half_extent.x - amp, w.center.y - amp, w.center.z - w.half_extent.y - amp},
-                           {w.center.x + w.half_extent.x + amp, w.center.y + amp, w.center.z + w.half_extent.y + amp}};
+            const Aabb box = water_bounds(w);
             if (!frustum.intersects(box)) continue;
-            const Vec3 c = camera_.position;
-            const Vec3 nearest{std::clamp(c.x, box.min.x, box.max.x), std::clamp(c.y, box.min.y, box.max.y),
-                               std::clamp(c.z, box.min.z, box.max.z)};
-            candidates.emplace_back(length(nearest - c), &w);
+            candidates.emplace_back(distance_to(box, camera_.position), &w);
         }
         std::stable_sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
         facts_.water_in_view = static_cast<std::uint32_t>(candidates.size());
@@ -4958,17 +5037,25 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
 
     // Opaque geometry, then (with decals) the decal pass, then blended geometry and debug lines.
     // Without decals one forward pass draws both phases.
-    auto forward_body = [&](PassContext& ctx, bool opaque_phase, bool blended_phase) {
+    // ADR-0260: the planar reflection pass reuses the opaque phase with the mirrored view, its own
+    // lighting (mirrored camera, no screen-space inputs, no clustered lights) and its own batches.
+    struct PlanarPass {
+        Mat4 view_proj, sky_inv_view_proj;
+        LightingUniforms lighting;
+        const std::vector<Batch>* batches;
+    };
+    auto forward_body = [&](PassContext& ctx, bool opaque_phase, bool blended_phase, const PlanarPass* mirror = nullptr) {
             rhi::RenderPass& pass = *ctx.pass;
+            const Mat4& pass_vp = mirror ? mirror->view_proj : view_proj;
             // Only the opaque forward pass is multisampled (and the blended phase when it shares it).
-            const bool ms = opaque_phase && msaa > 1;
+            const bool ms = opaque_phase && msaa > 1 && !mirror;
             const auto ms_pipe = [&](rhi::PipelineHandle p, bool a2c) { return ms ? multisampled(p, msaa, a2c) : p; };
             const auto a2c_of = [&](const Material& m) {
                 return ms && S.alpha_to_coverage && m.alpha_cutoff > 0.0f && m.blend == MaterialBlend::Opaque;
             };
             if (opaque_phase && env_.draw_sky) {
                 SkyUniforms sky{};
-                sky.inv_view_proj = inverse(view_proj);
+                sky.inv_view_proj = mirror ? mirror->sky_inv_view_proj : inverse(view_proj);
                 sky.zenith = rgb(env_.sky_background ? env_.background_zenith : env_.sky_zenith);
                 sky.horizon = rgb(env_.sky_background ? env_.background_horizon : env_.sky_horizon);
                 sky.ground = rgb(env_.sky_background ? env_.background_ground : env_.ground);
@@ -4987,10 +5074,10 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             const rhi::TextureHandle shadow_tex = shadow_map.valid() ? ctx.texture(shadow_map) : no_shadow_;
             const rhi::TextureHandle local_shadow_tex = local_shadow_map.valid() ? ctx.texture(local_shadow_map) : no_shadow_;
             const rhi::TextureHandle rain_tex = rain_map.valid() ? ctx.texture(rain_map) : no_shadow_;
-            const rhi::TextureHandle ao_tex = ao.valid() ? ctx.texture(ao) : ctx_.white();
+            const rhi::TextureHandle ao_tex = ao.valid() && !mirror ? ctx.texture(ao) : ctx_.white();
             const rhi::TextureHandle lightmap_tex = env_.lightmap ? env_.lightmap : ctx_.black();
             const bool gles = dev.capabilities().backend == rhi::Backend::GLES;
-            const bool ssr_on = facts_.opaque_ssr == RenderPathFacts::OpaqueSsr::Active;
+            const bool ssr_on = facts_.opaque_ssr == RenderPathFacts::OpaqueSsr::Active && !mirror;
             const rhi::TextureHandle ssr_color_tex = ssr_on ? history_[hist] : ctx_.black();
             const rhi::TextureHandle ssr_depth_tex = ssr_on ? depth_history_[hist] : ctx_.black();
             const rhi::TextureHandle lightmap_dir_tex =
@@ -5001,9 +5088,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                        : (env_.lightmap && d->mesh->lightmapped()) ? kVertexLightmapped
                                                                        : kVertexStatic;
             };
-            FrameUniforms frame{view_proj};
+            FrameUniforms frame{pass_vp};
             ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, frame);
-            ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, lighting);
+            ctx.cmd.push_uniforms(rhi::ShaderStage::Fragment, 0, mirror ? mirror->lighting : lighting);
             rhi::PipelineHandle bound{};
             // `indirect`: main batch index whose instance count comes from the occlusion pass.
             auto draw_batch = [&](const Batch& b, rhi::PipelineHandle want, int indirect = -1) {
@@ -5099,8 +5186,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     draw_mesh_lod(pass, *d->mesh, d->lod, b.instance_count);
                 }
             };
-            for (std::size_t bi = 0; opaque_phase && bi < main_batches.size(); ++bi) {
-                const Batch& b = main_batches[bi];
+            const std::vector<Batch>& opaque_batches = mirror ? *mirror->batches : main_batches;
+            for (std::size_t bi = 0; opaque_phase && bi < opaque_batches.size(); ++bi) {
+                const Batch& b = opaque_batches[bi];
                 const Draw* d = b.first;
                 const std::uint32_t variant = vertex_variant(d);
                 rhi::PipelineHandle want = variant == kVertexSkinned       ? (d->material->double_sided ? skin_double_ : skin_cull_)
@@ -5111,9 +5199,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                                                              d->material->double_sided, MaterialBlend::Opaque))
                         want = custom;
                 want = ms_pipe(want, a2c_of(*d->material));
-                if (want) draw_batch(b, want, occlusion && bi < occl_batches_ ? static_cast<int>(bi) : -1);
+                if (want) draw_batch(b, want, occlusion && !mirror && bi < occl_batches_ ? static_cast<int>(bi) : -1);
             }
-            if (!blended_phase) return;
+            if (!blended_phase || mirror) return;
             // Blended geometry after every opaque draw (and the decals), far to near.
             for (const Batch& b : transparent_batches) {
                 const Draw* d = b.first;
@@ -5134,6 +5222,44 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
     };
     // Clouds and volumetric fog are composited between the opaque and blended passes (ADR-0119).
     const bool split_forward = !decal_draws.empty() || !water_draws.empty() || fog || clouds;
+    // Planar reflection (ADR-0260): the opaque scene and sky from the mirrored camera, before the
+    // main view, at planar_reflection_scale of the render size. Only when water is drawn.
+    RGTexture planar_tex{};
+    facts_.planar = false;
+    if (planar && !water_draws.empty()) {
+        const float scale = S.planar_reflection_scale;
+        const auto pw = std::max(1u, static_cast<std::uint32_t>(static_cast<float>(rw) * scale + 0.5f));
+        const auto ph = std::max(1u, static_cast<std::uint32_t>(static_cast<float>(rh) * scale + 0.5f));
+        planar_tex = graph.create_texture("planar_reflection", color_desc(hdr_format_, pw, ph));
+        rhi::TextureDesc pd = color_desc(depth_format_, pw, ph);
+        pd.usage = rhi::TextureUsageDepthTarget;
+        const RGTexture planar_depth = graph.create_texture("planar_reflection_depth", pd);
+        facts_.planar = true;
+        facts_.planar_width = pw;
+        facts_.planar_height = ph;
+        facts_.planar_draws = stats_.planar_reflection_draws;
+        facts_.planar_plane = planar->height;
+        graph.add_pass(
+            "planar_reflection",
+            [&, planar_tex, planar_depth](PassBuilder& b) {
+                if (shadow_map.valid()) b.read(shadow_map);
+                if (local_shadow_map.valid()) b.read(local_shadow_map);
+                if (rain_map.valid()) b.read(rain_map);
+                b.write_color(planar_tex, rhi::LoadOp::Clear, env_.clear_color);
+                b.write_depth(planar_depth, rhi::LoadOp::Clear, 1.0f);
+            },
+            [&, pw, ph](PassContext& ctx) {
+                PlanarPass mp{planar->view_proj, inverse(planar->sky_view_proj), lighting, &scratch_->reflected_batches};
+                mp.lighting.camera_pos = Vec4(planar->position, 0.0f); // no screen-space occlusion
+                mp.lighting.camera_forward = Vec4(planar->forward, lighting.camera_forward.w);
+                mp.lighting.screen.x = 1.0f / static_cast<float>(pw);
+                mp.lighting.screen.y = 1.0f / static_cast<float>(ph);
+                mp.lighting.ground_color.w = 0.0f; // the light clusters belong to the main view
+                mp.lighting.volumetric.w = 0.0f;
+                mp.lighting.ssr_params.x = 0.0f;
+                forward_body(ctx, true, false, &mp);
+            });
+    }
     graph.add_pass(
         "forward",
         [&](PassBuilder& b) {
@@ -5296,6 +5422,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         const bool ssr = S.screen_space_reflections;
         base.ssr = {ssr ? static_cast<float>(S.ssr_steps) : 0.0f, S.ssr_max_distance, S.ssr_thickness, 1.0f};
         facts_.ssr = ssr;
+        if (planar_tex.valid()) base.planar_vp = planar->view_proj;
         auto frame_of = [&](const WaterSurface& w) {
             WaterFrameUniforms f{};
             f.view_proj = view_proj;
@@ -5314,15 +5441,18 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
             [&](PassBuilder& b) {
                 b.read(water_scene);
                 b.read(depth);
+                if (planar_tex.valid()) b.read(planar_tex);
                 b.write_color(hdr, rhi::LoadOp::Load);
                 write_reactive(b);
             },
-            [&, base, frame_of, wenv, water_scene](PassContext& ctx) {
+            [&, base, frame_of, wenv, water_scene, planar_tex](PassContext& ctx) {
                 rhi::RenderPass& pass = *ctx.pass;
                 pass.bind_pipeline(reactive ? reactive_pl[2][0] : water_pipeline_);
                 pass.bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(water_scene), ctx_.linear_clamp());
                 pass.bind_texture(rhi::ShaderStage::Fragment, 1, ctx.texture(depth), ctx_.nearest_clamp());
                 pass.bind_texture(rhi::ShaderStage::Fragment, 2, wenv ? wenv->cube() : ctx_.black_cube(), ctx_.linear_clamp());
+                pass.bind_texture(rhi::ShaderStage::Fragment, 3, planar_tex.valid() ? ctx.texture(planar_tex) : ctx_.black(),
+                                  ctx_.linear_clamp());
                 for (const WaterSurface* w : water_draws) {
                     const WaterFrameUniforms f = frame_of(*w);
                     ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, f);
@@ -5333,6 +5463,9 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     u.params.x = w->refraction;
                     u.params.y = w->roughness;
                     u.env.z = w->center.y;
+                    // ADR-0260: surfaces at the reflection's height sample it; others keep SSR.
+                    const bool mirrored = planar_tex.valid() && w->planar_reflection && std::fabs(w->center.y - planar->height) < 1e-3f;
+                    u.planar = {mirrored ? 1.0f : 0.0f, 0.5f * w->refraction + 0.01f, 0, 0};
                     for (std::size_t i = 0; i < 4; ++i) {
                         u.wave_a[i] = f.wave_a[i];
                         u.wave_b[i] = f.wave_b[i];

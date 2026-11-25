@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="152" viewBox="0 0 1280 152" role="img" aria-labelledby="t d">
 <title id="t">VICTUS in numbers</title>
-<desc id="d">1,242 automated test cases (CTest on Linux, Windows, macOS); 32 engine modules (rendering to networking); 259 decision records (every architectural choice); 6 ready-made templates (including two with no code)</desc>
+<desc id="d">1,246 automated test cases (CTest on Linux, Windows, macOS); 32 engine modules (rendering to networking); 260 decision records (every architectural choice); 6 ready-made templates (including two with no code)</desc>
 <style>@media (prefers-reduced-motion: no-preference) {
 .c0{animation:fade .9s 0.15s cubic-bezier(.2,.7,.1,1) both}.b0{transform-box:fill-box;transform-origin:left;animation:grow 1.6s 0.40s cubic-bezier(.2,.7,.1,1) both}.c1{animation:fade .9s 0.33s cubic-bezier(.2,.7,.1,1) both}.b1{transform-box:fill-box;transform-origin:left;animation:grow 1.6s 0.58s cubic-bezier(.2,.7,.1,1) both}.c2{animation:fade .9s 0.51s cubic-bezier(.2,.7,.1,1) both}.b2{transform-box:fill-box;transform-origin:left;animation:grow 1.6s 0.76s cubic-bezier(.2,.7,.1,1) both}.c3{animation:fade .9s 0.69s cubic-bezier(.2,.7,.1,1) both}.b3{transform-box:fill-box;transform-origin:left;animation:grow 1.6s 0.94s cubic-bezier(.2,.7,.1,1) both}
 @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
@@ -10,7 +10,7 @@
 <rect x="1.0" y="1" width="303.0" height="150" rx="18" fill="#F4F7FC" stroke="#D6DEEC"/>
 <rect class="b0" x="24.0" y="124" width="257.0" height="4" rx="2" fill="#0891B2" opacity=".85"/>
 <rect x="24.0" y="124" width="257.0" height="4" rx="2" fill="#0891B2" opacity=".15"/>
-<text x="24.0" y="66" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="44" font-weight="800" fill="#0891B2" letter-spacing="-.02em">1,242</text>
+<text x="24.0" y="66" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="44" font-weight="800" fill="#0891B2" letter-spacing="-.02em">1,246</text>
 <text x="24.0" y="92" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="700" fill="#0B1222">automated test cases</text>
 <text x="24.0" y="112" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="500" fill="#55627A">CTest on Linux, Windows, macOS</text>
 </g><g class="c1">
@@ -24,7 +24,7 @@
 <rect x="651.0" y="1" width="303.0" height="150" rx="18" fill="#F4F7FC" stroke="#D6DEEC"/>
 <rect class="b2" x="674.0" y="124" width="257.0" height="4" rx="2" fill="#7E22CE" opacity=".85"/>
 <rect x="674.0" y="124" width="257.0" height="4" rx="2" fill="#7E22CE" opacity=".15"/>
-<text x="674.0" y="66" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="44" font-weight="800" fill="#7E22CE" letter-spacing="-.02em">259</text>
+<text x="674.0" y="66" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="44" font-weight="800" fill="#7E22CE" letter-spacing="-.02em">260</text>
 <text x="674.0" y="92" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="700" fill="#0B1222">decision records</text>
 <text x="674.0" y="112" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="500" fill="#55627A">every architectural choice</text>
 </g><g class="c3">

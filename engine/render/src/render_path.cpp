@@ -292,6 +292,20 @@ RenderPathReport describe_render_path(const RenderSettings& settings, const Rend
         add("ssr", reduced ? PathState::Reduced : PathState::Active, reduced ? by(S.ssr_steps == tier.ssr_steps) : PathReason::None,
             std::format("{} steps over {:g} m on water", S.ssr_steps, S.ssr_max_distance));
     }
+    // ADR-0260: one planar reflection per frame, for the nearest surface the camera is above.
+    if (f.water_drawn == 0) add("planar_reflections", PathState::Off, PathReason::NotNeeded, "no water drawn");
+    else if (f.capture_mode) add("planar_reflections", PathState::Off, PathReason::CaptureMode, "");
+    else if (!S.planar_reflections)
+        add("planar_reflections", PathState::Off, by(S.planar_reflections == tier.planar_reflections), "water uses screen-space reflections");
+    else if (!f.planar)
+        add("planar_reflections", PathState::Off, PathReason::NotNeeded, "camera not above a surface that allows a planar reflection");
+    else {
+        const bool reduced = S.planar_reflection_scale < ref.planar_reflection_scale;
+        add("planar_reflections", reduced ? PathState::Reduced : PathState::Active,
+            reduced ? by(S.planar_reflection_scale == tier.planar_reflection_scale) : PathReason::None,
+            std::format("{}x{}, {} mirrored about y = {:g}", f.planar_width, f.planar_height, count(f.planar_draws, "draw", "draws"),
+                        f.planar_plane));
+    }
     const bool opaque_ssr_set = S.screen_space_reflections && S.ssr_max_roughness > 0.0f;
     const bool opaque_ssr_tier = tier.screen_space_reflections && tier.ssr_max_roughness > 0.0f;
     switch (opaque_ssr_set ? f.opaque_ssr : RenderPathFacts::OpaqueSsr::Disabled) {

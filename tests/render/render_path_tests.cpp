@@ -233,7 +233,7 @@ TEST_CASE("render path: effect budgets scale with the tier and name the tier, a 
     CHECK(get(r, "particles").state == PathState::Reduced);
     CHECK(get(r, "particles").reason == PathReason::QualityTier);
     CHECK(get(r, "particles").detail == "12000 particles in 2 batches; nearest 12000 of 30000 CPU particles in view (max_particles 16384)");
-    CHECK(r.reduced_summary().find("decals (quality_tier), water (quality_tier), ssr off (quality_tier), ssr_opaque off (quality_tier), particles (quality_tier)") !=
+    CHECK(r.reduced_summary().find("decals (quality_tier), water (quality_tier), ssr off (quality_tier), planar_reflections off (quality_tier), ssr_opaque off (quality_tier), particles (quality_tier)") !=
           std::string::npos);
     // ADR-0196: water reflections follow the tier: off on Low, reduced steps below Ultra.
     CHECK(get(r, "ssr").state == PathState::Off);

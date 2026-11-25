@@ -10,6 +10,7 @@ No VICTUS version has been released yet. The first tagged release will be 0.2.0 
 
 ### Added
 
+- Planar reflections for water (ADR-0260): on High and Ultra the nearest water surface the camera is above reflects the opaque scene and sky rendered from a mirrored camera, so objects off screen or behind others appear in it. An oblique near plane keeps what is under the surface out of the reflection; other surfaces, Low and Medium keep screen-space reflections. ([evidence](docs/STATUS.md#2026-11-25--planar-reflections-for-water-adr-0260))
 - Networked level travel (ADR-0259): when a hosting server changes scene (`scene.load` in the player or Studio, or `NetServer::travel`), every client loads the same level, the host and every player get new characters from its player templates, and later joiners or rejoining clients are sent to the current level first. ([evidence](docs/STATUS.md#2026-11-24--networked-level-travel-adr-0259))
 - Replicated gameplay components (ADR-0258): the server mirrors Attributes, Inventory and Tags (configurable) to clients when they change and on join. Clients get the same `attribute_changed` and `inventory_changed` events as the server, and effect timers do not cause resends. ([evidence](docs/STATUS.md#2026-11-24--replicated-gameplay-components-adr-0258))
 - Tilemap camera culling (ADR-0256): tilemaps only emit cells inside the camera view (padded by one cell), using direct lookups for small views and a range test for zoomed-out views. ([evidence](docs/STATUS.md#2026-11-24--tilemap-camera-culling-adr-0256))

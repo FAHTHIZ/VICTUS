@@ -7,10 +7,13 @@
 // no depth attachment: it tests against sampled opaque depth itself (water depth is written by
 // a following depth-only pass). Screen-space reflections (ADR-0196) march the reflected ray
 // through the opaque depth and fetch the hit from the scene copy; misses and fades fall back to the
-// environment, so off-screen objects reflect the sky as before.
+// environment, so off-screen objects reflect the sky as before. Planar reflections (ADR-0260):
+// the surface at the reflection plane's height instead samples the scene rendered from the mirrored
+// camera, offset by the wave normal, so objects off screen or behind others reflect too.
 layout(set = 2, binding = 0) uniform sampler2D u_scene; // copy of the HDR colour before water
 layout(set = 2, binding = 1) uniform sampler2D u_depth;
 layout(set = 2, binding = 2) uniform samplerCube u_env;
+layout(set = 2, binding = 3) uniform sampler2D u_planar; // mirrored scene (ADR-0260), stored upside down
 layout(set = 3, binding = 0) uniform Params {
     mat4 inv_view_proj; // jittered, matches the depth buffer
     vec4 camera;        // xyz position, w time (s)
@@ -30,6 +33,8 @@ layout(set = 3, binding = 0) uniform Params {
     vec4 wave_b[4];
     mat4 view_proj; // jittered, matches the depth buffer (ADR-0196)
     vec4 ssr;       // x steps (0 = off), y max distance (m), z thickness (m), w intensity
+    mat4 planar_vp; // world -> planar reflection clip (ADR-0260)
+    vec4 planar;    // x this surface samples the planar reflection, y wave distortion (uv)
 } u;
 layout(location = 0) in vec3 v_world;
 layout(location = 1) in vec2 v_rest;
@@ -179,8 +184,17 @@ void main() {
         vec3 R = reflect(-V, N);
         R.y = abs(R.y);
         reflected = sky_radiance(R, u.params.y);
-        vec4 hit = trace_reflection(v_world, R);
-        reflected = mix(reflected, hit.rgb, clamp(hit.a, 0.0, 1.0));
+        if (u.planar.x > 0.5) {
+            // The mirrored image of this point of the rest plane, displaced by the wave slope.
+            vec4 pc = u.planar_vp * vec4(v_world.x, u.env.z, v_world.z, 1.0);
+            // The reflection covers the whole view, so the screen border needs no fade; a lookup the
+            // waves push past it is clamped to the border.
+            vec2 puv = to_uv(pc) + N.xz * u.planar.y / (1.0 + dist * 0.02);
+            if (pc.w > 1e-4) reflected = textureLod(u_planar, clamp(puv, vec2(0.0), vec2(1.0)), 0.0).rgb;
+        } else {
+            vec4 hit = trace_reflection(v_world, R);
+            reflected = mix(reflected, hit.rgb, clamp(hit.a, 0.0, 1.0));
+        }
     }
     vec3 color = mix(refracted, reflected, fresnel);
 

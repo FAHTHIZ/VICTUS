@@ -305,3 +305,116 @@ TEST_CASE("gpu water: screen-space reflections mirror objects above the surface 
     CHECK(ssr_state() == PathState::Off); // the last frame had it off
     ctx.destroy(cube);
 }
+
+TEST_CASE("gpu water: planar reflections mirror objects off screen and clip what is under water (ADR-0260)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    SceneRenderer& r = *sr.value();
+    const Floor floor(ctx);
+    auto cube = ctx.create_mesh(make_cube(), "planar_slab").value();
+    Material green, blue;
+    green.base_color = blue.base_color = {0, 0, 0, 1};
+    green.emissive = {0.1f, 1.0f, 0.1f, 1};
+    green.emissive_strength = 20.0f;
+    blue.emissive = {0.1f, 0.1f, 1.0f, 1};
+    blue.emissive_strength = 20.0f;
+    // A glowing slab overhead, above the top of the view (so screen-space reflections cannot find
+    // it); a glowing block under murky water, which the reflection must not pick up; and a dark post
+    // standing in the water whose submerged part lies on the mirrored rays to the slab, so the
+    // slab's reflection survives only if the oblique near plane clips everything under the surface.
+    Material dark;
+    dark.base_color = {0.02f, 0.02f, 0.02f, 1};
+    const math::Mat4 slab = math::Mat4::trs({0, 3.25f, -1.25f}, {}, {3.0f, 0.5f, 1.5f});
+    const math::Mat4 sunken = math::Mat4::trs({0, -0.3f, 1.0f}, {}, {1.0f, 0.3f, 1.0f});
+    const math::Mat4 post = math::Mat4::trs({0, -0.975f, 3.2f}, {}, {6.0f, 2.05f, 0.6f});
+    WaterSurface w = calm(0.02f);
+    w.roughness = 0.02f;
+    w.refraction = 0.0f;
+    for (auto& wave : w.waves) wave.amplitude = 0.0f;
+    const math::Vec3 eye{0, 1.0f, 4};
+    const float pitch = math::radians(15.0f);
+    const Camera3D cam = Camera3D::look_at(eye, eye + math::Vec3{0, -std::sin(pitch), -std::cos(pitch)});
+    const auto render = [&](RenderSettings s, const char* save) {
+        r.set_settings(s);
+        auto& dev = gpu().ctx->device();
+        auto target = test::make_target(W, H);
+        DirectionalLight sun;
+        sun.direction = {0.3f, -1, -0.2f};
+        sun.intensity = 1.0f;
+        sun.shadows = false;
+        r.begin(cam, sun, flat_env());
+        floor.submit(r);
+        r.submit(cube, green, slab);
+        r.submit(cube, blue, sunken);
+        r.submit(cube, dark, post);
+        r.add_water(w);
+        auto cmd = dev.begin_commands();
+        REQUIRE(r.render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+        cmd.submit_and_wait();
+        Shot out{dev.read_texture(target).value(), r.stats()};
+        test::save_output(save, W, H, out.px);
+        dev.destroy(target);
+        return out;
+    };
+    const auto count = [&](const Shot& s, int ch) {
+        int n = 0;
+        for (std::uint32_t y = 0; y < H; ++y)
+            for (std::uint32_t x = 0; x < W; ++x) {
+                const std::uint32_t c = s.at(x, y);
+                const int v = static_cast<int>(channel(c, ch));
+                const int others = std::max(static_cast<int>(channel(c, (ch + 1) % 3)), static_cast<int>(channel(c, (ch + 2) % 3)));
+                if (v > 60 && v > others + 30) ++n;
+            }
+        return n;
+    };
+    const auto planar_feature = [&] {
+        const PathFeature* f = r.path_report().find("planar_reflections");
+        REQUIRE(f != nullptr);
+        return *f;
+    };
+    RenderSettings on = flat_settings();
+    on.screen_space_reflections = true;
+    on.planar_reflections = true;
+    on.planar_reflection_scale = 0.5f;
+    RenderSettings off = on;
+    off.planar_reflections = false;
+
+    const Shot with = render(on, "water_planar");
+    const PathFeature active = planar_feature();
+    const Shot without = render(off, "water_planar_off");
+    const PathFeature disabled = planar_feature();
+    const int green_on = count(with, 1), green_off = count(without, 1);
+    const int blue_on = count(with, 2), blue_off = count(without, 2);
+    MESSAGE("green pixels with planar " << green_on << ", SSR only " << green_off << "; blue " << blue_on << " vs " << blue_off
+                                        << "; " << active.detail << "; draws " << with.stats.planar_reflection_draws);
+    CHECK(green_off == 0);   // the slab is off screen: neither it nor an SSR hit shows
+    CHECK(green_on > 150);   // the mirror shows it in the water, past the post's submerged part
+    CHECK(blue_on == blue_off); // the sunken block is not reflected
+    CHECK(blue_on == 0);
+    CHECK(active.state == PathState::Reduced); // half of Ultra's resolution
+    CHECK(active.detail.find("80x48") != std::string::npos);
+    CHECK(with.stats.planar_reflection_draws == 2); // slab and post; the floor and the sunken block are culled below the plane
+    CHECK(without.stats.planar_reflection_draws == 0);
+    CHECK(disabled.state == PathState::Off);
+    CHECK(disabled.reason == PathReason::QualityTier); // Medium has it off
+
+    // From below the surface there is nothing to mirror.
+    const Camera3D under = Camera3D::look_at({0, -0.2f, 4}, {0, -0.2f, -4});
+    r.set_settings(on);
+    {
+        auto& dev = gpu().ctx->device();
+        auto target = test::make_target(W, H);
+        r.begin(under, DirectionalLight{}, flat_env());
+        r.submit(cube, green, slab);
+        r.add_water(w);
+        auto cmd = dev.begin_commands();
+        REQUIRE(r.render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+        cmd.submit_and_wait();
+        dev.destroy(target);
+    }
+    CHECK(r.stats().planar_reflection_draws == 0);
+    CHECK(planar_feature().reason == PathReason::NotNeeded);
+    ctx.destroy(cube);
+}

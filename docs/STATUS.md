@@ -4171,5 +4171,27 @@ Verified (2-vCPU sandbox, clang Debug `-Werror`, Mesa llvmpipe/lavapipe, `SDL_VI
 - `VICTUS_GPU_DRIVER=gles victus_gpu_tests -tc="*ssr*"`: 3/3 cases, 16 assertions. Vulkan: 3/3 cases, 107 assertions.
 - `victus_net_tests`: 30/30 cases, 1,117 assertions.
 - Not verified: the MSVC build itself (no Windows here; CI checks it).
-- Commit: see git log.
+- Commit: d4c1dc5.
 - Next task: planar reflections for water.
+
+## 2026-11-25 — Planar reflections for water (ADR-0260)
+
+Built:
+- `planar_reflection_view` (mirrored view, clip y negated so winding and culling are unchanged, sky view without the oblique plane) and `oblique_near_plane` (Lengyel 2005, [0, 1] depth) in `scene_renderer.hpp`.
+- `WaterSurface::planar_reflection` (default on), `RenderSettings::planar_reflections` and `planar_reflection_scale` (Low/Medium off, High 0.5, Ultra 1.0; clamped to 0.25..1), `SceneStats::planar_reflection_draws`.
+- The renderer picks the nearest in-view surface the camera is above, culls opaque draws against the mirrored frustum (skipping those wholly below the plane), and renders them with the sky in a `planar_reflection` pass before `forward`. It reuses the forward body's opaque phase with its own lighting copy (mirrored camera, no AO, opaque SSR, volumetric fog or clustered local lights).
+- `water.frag` samples the planar texture (binding 3) through the mirrored view-projection with a wave-normal offset instead of SSR for that surface.
+- Rendering-path feature `planar_reflections` with its reasons (no water or camera below, capture mode, setting off).
+- Tests: `tests/render/planar_reflection_tests.cpp` (view maths, clipping and winding; oblique plane; presets and path report); GPU case `gpu water: planar reflections mirror objects off screen and clip what is under water (ADR-0260)`.
+
+Verified (2-vCPU sandbox, clang Debug `-Werror`, Mesa llvmpipe/lavapipe, `SDL_VIDEO_DRIVER=offscreen VICTUS_REQUIRE_GPU=1`):
+- `victus_render_tests`: 81/81 cases, 58,293 assertions.
+- `victus_gpu_tests -tc="*water*,*ssr*"`: Vulkan 10/10 cases, 242 assertions; `VICTUS_GPU_DRIVER=gles` 10/10 cases, 151 assertions.
+- The planar case sees 552 green pixels of an off-screen emissive slab in the water (0 with SSR only) and none of a block under the surface. With the oblique near plane removed, the sunken block shows through and the case fails, so it catches the clipping.
+- `compile_shaders.py --check`: up to date (only `water.frag` and its reactive variant changed). `check_docs.py`: consistent. `readme_assets.py --check`: up to date.
+- `victus_gpu_tests` (all): Vulkan 266/266 cases, 29,866 assertions; GLES 266/266 cases, 27,421 assertions.
+- `victus_reference_scenes`: the effects scene drifted only in the pool, which now shows the planar reflection (worst tile FLIP 0.031). Its goldens are regenerated and `planar_reflections` is now an expected feature there; the test passes.
+- Not run: the full `ctest` (the other test binaries do not render water; CI runs them).
+- Not verified: real GPUs, the cost of the extra pass on a phone, MSVC and macOS builds (CI checks them).
+- Commit: see git log.
+- Next task: FFT ocean spectrum for water.

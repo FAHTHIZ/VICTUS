@@ -403,8 +403,28 @@ struct WaterSurface {
     float roughness{0.06f};
     std::uint32_t resolution{128}; // grid cells per side (16..512)
     float time{0};                 // seconds; animates ripples and foam
+    // ADR-0260: may take this frame's planar reflection (RenderSettings::planar_reflections).
+    bool planar_reflection{true};
 };
 inline constexpr std::size_t kMaxWaterSurfaces = 16;
+
+// Planar reflections (ADR-0260): the camera mirrored about the horizontal plane y = height.
+// view_proj renders the mirrored scene with an oblique near plane on the water (Lengyel 2005), so
+// nothing below the surface reaches the reflection, and clip y negated, which undoes the mirror's
+// change of handedness: front faces stay front faces and the normal cull pipelines apply. The
+// image is therefore stored upside down; water projects its points through view_proj to sample it.
+// sky_view_proj is the same view without the oblique plane, for sky ray directions.
+struct PlanarReflectionView {
+    math::Mat4 view_proj;
+    math::Mat4 sky_view_proj;
+    math::Vec3 position; // mirrored camera position
+    math::Vec3 forward;  // mirrored view direction
+    float height{0};
+};
+[[nodiscard]] PlanarReflectionView planar_reflection_view(const Camera3D& camera, float aspect, float height) noexcept;
+// Replaces the depth row of a [0, 1]-depth projection so that its near plane is `view_plane`
+// (a view-space plane, positive on the visible side; the camera must lie on its negative side).
+[[nodiscard]] math::Mat4 oblique_near_plane(const math::Mat4& projection, math::Vec4 view_plane) noexcept;
 
 // Agx (ADR-0234): Troy Sobotka's AgX view (Blender 4, Godot 4.4, three.js), which desaturates
 // bright highlights towards white instead of skewing their hue like the ACES fit.
@@ -634,6 +654,12 @@ struct RenderSettings {
     // reflections, against last frame's TAA history (so only with TAA, High and Ultra), with half
     // of ssr_steps (at least 8). 0 turns opaque reflections off; water keeps its own trace.
     float ssr_max_roughness{0.5f};
+    // Planar reflections (ADR-0260): the nearest water surface in view (with
+    // WaterSurface::planar_reflection) reflects the opaque scene and sky rendered a second time from
+    // the camera mirrored about its rest plane, so objects off screen or hidden behind others
+    // reflect too. Other surfaces keep screen-space reflections. Off on Low and Medium.
+    bool planar_reflections{true};
+    float planar_reflection_scale{0.5f}; // resolution of the reflection relative to the 3D render (0.25..1)
     bool bloom{true};
     std::uint32_t bloom_levels{5};        // 1..8 mip levels
     bool fxaa{true};                      // ignored while TAA is active
@@ -891,6 +917,7 @@ struct SceneStats {
     std::uint64_t transparent_triangles{0};
     std::uint32_t decals{0};           // decals drawn (after frustum culling)
     std::uint32_t water_surfaces{0};   // water surfaces drawn (after frustum culling)
+    std::uint32_t planar_reflection_draws{0}; // ADR-0260: opaque draws in the planar reflection (0: none rendered)
     std::uint32_t reflection_probes{0}, probe_draws{0}; // probes used / visible draws lit by a probe
     std::uint32_t instances_uploaded{0};
     // Retained instance groups (ADR-0162): clusters submitted / clusters passing the main-view
@@ -1555,6 +1582,7 @@ private:
         std::uint8_t history_lod{0};     // unbiased pick recorded in the LOD history
         std::uint8_t fade_from{0}, fade_step{0}, fade_lod{0};
         bool held{false}, rain{false}, in_view{false};
+        bool reflected{false}; // ADR-0260: drawn into this frame's planar water reflection
         std::uint32_t receiver_culled{0}; // cascades skipped by shadow receiver culling
     };
     struct FrameScratch;

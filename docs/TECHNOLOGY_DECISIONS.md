@@ -3047,6 +3047,27 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 - The one-cell pad covers rotated tiles and filtering at the edges. Tiles larger than their cell are not supported by the pad.
 - Culling assumes the map lies in the batch's z = 0 plane, as all 2D tilemaps do.
 
+### ADR-0260: Planar reflections for water
+
+**Status:** Accepted (2026-11-25).
+
+**Context:** Rendering gaps (ROADMAP, GAP-16): water reflected the scene only in screen space (ADR-0196). Objects above the top of the view, or hidden behind others, reflected the sky instead, which looks wrong on lakes and harbours where the camera looks down at the water. Unity HDRP, Unreal and Godot all offer planar reflections: the scene rendered a second time from the camera mirrored about the water plane.
+
+**Decision:**
+- One planar reflection per frame, for the nearest water surface in view whose `WaterSurface::planar_reflection` is set (default on) and that the camera is above. It is chosen before visibility, so draws are also culled against the mirrored frustum; draws whose bounds lie wholly below the plane are skipped. Other surfaces keep SSR.
+- `planar_reflection_view(camera, aspect, height)` builds the mirrored view. The near plane is made oblique (Lengyel 2005, [0, 1] depth variant) so that it lies on the water plane, and nothing under the surface reaches the reflection. Clip y is negated, which cancels the mirror's change of handedness: front faces stay front faces, the normal back-face culled pipelines apply, and the texture is stored upside down. The sky uses the same view without the oblique plane, because the tilted far plane would skew its ray directions.
+- The `planar_reflection` pass runs before the main forward pass. It reuses the opaque phase of the forward body, so every opaque material, vertex function, lightmap, probe, shadow cascade and the fog shade as in the main view. It has its own lighting copy: the mirrored camera position and direction, no SSAO or contact shadows, no opaque SSR, no volumetric fog, and no clustered local lights, since the light clusters belong to the main view's screen tiles. It does not use the occlusion-culling results either.
+- The texture is the HDR format at `planar_reflection_scale` of the 3D render size: off on Low and Medium, 0.5 on High and 1.0 on Ultra.
+- `water.frag` projects the fragment's point on the rest plane through the mirrored view-projection. It offsets the lookup by the wave normal (half the surface's refraction plus 0.01 in UV, reduced with distance) and clamps it to the texture. Fresnel, glint, foam and fog stay the same.
+- The rendering-path report has a `planar_reflections` feature (size, draws, plane height). Without water, below the surface, in capture mode or when switched off it reports why. `SceneStats::planar_reflection_draws` counts the mirrored draws.
+
+**Consequences:**
+- On High and Ultra, objects off screen or behind others appear in the water. A planar water scene costs up to a second opaque pass (quarter-size on High).
+- Reflections show no particles, blended materials (glass), decals, fog volumes, clouds or local lights, and rough water is not blurred.
+- Draws in a LOD cross-fade show only the incoming level in the reflection.
+- Surfaces at other heights in the same frame keep SSR. Several lakes at different heights get one planar reflection: the nearest.
+- The Water component has no switch yet: all its surfaces allow the reflection, and the quality setting controls it.
+
 ### ADR-0259: Networked level travel
 
 **Status:** Accepted (2026-11-24).

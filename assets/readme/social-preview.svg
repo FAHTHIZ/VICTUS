@@ -16,11 +16,11 @@
 <text x="80" y="414" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="24" font-weight="500" fill="#A9B7D0">Luau and visual scripting, multiplayer and one-command export.</text>
 <g font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="800">
 <rect x="80" y="468" width="240" height="96" rx="18" fill="#0D1424" stroke="#1E2A44"/>
-<text x="104" y="516" font-size="38" fill="#22D3EE">1,242</text><text x="104" y="546" font-size="15" font-weight="600" fill="#93A3C0">automated test cases</text>
+<text x="104" y="516" font-size="38" fill="#22D3EE">1,246</text><text x="104" y="546" font-size="15" font-weight="600" fill="#93A3C0">automated test cases</text>
 <rect x="340" y="468" width="240" height="96" rx="18" fill="#0D1424" stroke="#1E2A44"/>
 <text x="364" y="516" font-size="38" fill="#818CF8">32</text><text x="364" y="546" font-size="15" font-weight="600" fill="#93A3C0">engine modules</text>
 <rect x="600" y="468" width="240" height="96" rx="18" fill="#0D1424" stroke="#1E2A44"/>
-<text x="624" y="516" font-size="38" fill="#A855F7">259</text><text x="624" y="546" font-size="15" font-weight="600" fill="#93A3C0">decision records</text>
+<text x="624" y="516" font-size="38" fill="#A855F7">260</text><text x="624" y="546" font-size="15" font-weight="600" fill="#93A3C0">decision records</text>
 </g>
 <g transform="translate(960 220)"><path d="M0 60L80 20l80 40-80 40z" fill="url(#cubeTop)"/><path d="M0 60v100l80 40V100z" fill="#0E7490"/><path d="M160 60v100l-80 40V100z" fill="#155E75"/></g>
 <circle cx="1180" cy="200" r="42" fill="#A855F7" fill-opacity=".85"/>
