@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Generated shader library matches sources
         run: python3 tools/shaders/compile_shaders.py --check
       - name: README artwork matches the repository counts
@@ -42,8 +42,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - name: Character pipeline unit checks (docs/CHARACTERS.md)
@@ -55,14 +55,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Pins, hashes and license table match cmake/VictusDependencies.cmake
         run: python3 tools/deps/victus_deps.py check
       - name: Known vulnerabilities (OSV)
         run: python3 tools/deps/victus_deps.py osv
       - name: CycloneDX SBOM
         run: python3 tools/deps/victus_deps.py sbom --out victus-sbom.cdx.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sbom
           path: victus-sbom.cdx.json
@@ -71,7 +71,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Linux dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_DEPS clang clang-tidy
       - name: Configure (compile database only)
@@ -92,7 +92,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_DEPS
@@ -101,7 +101,7 @@ jobs:
         run: brew install ccache
       - name: Compiler cache
         if: runner.os != 'Windows'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .ccache
           key: ccache-${{ matrix.os }}-${{ matrix.build_type }}-${{ github.sha }}
@@ -148,7 +148,7 @@ jobs:
           VICTUS_GPU_DRIVER=gles xvfb-run -a ./build/bin/victus run build/smoke3d --frames 30 --screenshot build/player_gles.png
       - name: Upload rendered images
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: renders-${{ matrix.os }}-${{ matrix.build_type }}
           path: |
@@ -164,14 +164,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Linux dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_DEPS
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '9.9.1'
       - name: Android SDK packages
@@ -192,7 +192,7 @@ jobs:
       - name: Check the APK
         run: tools/android/check_apk.sh platforms/android/app/build/outputs/apk/debug/app-debug.apk
       - name: Upload the APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: android-3d-template-debug-apk
           path: platforms/android/app/build/outputs/apk/debug/app-debug.apk
@@ -203,11 +203,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Ninja and ccache
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build ccache
       - name: Compiler cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .ccache
           key: ccache-headless-${{ github.sha }}
@@ -232,11 +232,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Linux dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_DEPS
       - name: Compiler cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .ccache
           # Cache keys cannot contain commas, so "address,undefined" is spelled asan-ubsan.
