@@ -1656,13 +1656,13 @@ struct NetClient::Impl {
     }
 
     void handle_travel(ByteReader& r) {
-        const std::uint32_t seq = r.u32();
+        const std::uint32_t travel_seq = r.u32();
         std::string lvl = r.str(kMaxLevelBytes);
         const std::string text = r.str(kMaxTravelParamsBytes);
         if (!r.done() || lvl.empty()) return;
-        if (seq == level_seq) return; // already there (a rejoin within the same level)
+        if (travel_seq == level_seq) return; // already there (a rejoin within the same level)
         auto params = decode_json(text, kMaxTravelParamsBytes);
-        level_seq = seq;
+        level_seq = travel_seq;
         level = std::move(lvl);
         ++level_changes;
         // The old level's entities go with it; the server announces the new level's.

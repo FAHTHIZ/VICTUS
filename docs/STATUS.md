@@ -4157,5 +4157,19 @@ Verified (2-vCPU sandbox, GCC 15.2, Release `-Werror`, lavapipe, `SDL_VIDEO_DRIV
 - clang-tidy on `session.cpp`, `player.cpp`, `editor_clients.cpp` and `script.cpp`: clean. `check_docs.py`: consistent.
 - Full `ctest -j2 --output-on-failure`: 48/50 passed in 991 s. The two failures (`victus_render_tests` shader-source check and `victus_docs_lint`) came from the next unit's uncommitted shader and ADR edits in the working tree while ctest ran. With those set aside, `victus_render_tests` passes 78/78 cases (58,218 assertions) and `check_docs.py` is consistent.
 - Not verified: the player and Studio wiring end to end (compiled, not run), the `level_changed` script message (scripts consume the net inbox, so the test cannot read it), real UDP links.
-- Commit: see git log (the commit after 58ca8f4).
+- Commit: aa403a2.
+- Next task: planar reflections for water.
+
+## 2026-11-25 — CI fixes on main (MSVC, macOS clang, GLES)
+
+Built:
+- `NetServer::handle_travel`: the local `seq` is now `travel_seq` (MSVC C4458, a local hiding a member, failed the Windows `-Werror` build).
+- `SpriteBatch`: removed four unused private size fields (clang `-Wunused-private-field` failed the macOS build).
+- `gpu_ssr_tests.cpp`: the ADR-0250 capture-mode case expects `PathReason::Unsupported` on GLES, where opaque SSR is never available, and `CaptureMode` elsewhere.
+
+Verified (2-vCPU sandbox, clang Debug `-Werror`, Mesa llvmpipe/lavapipe, `SDL_VIDEO_DRIVER=offscreen VICTUS_REQUIRE_GPU=1`):
+- `VICTUS_GPU_DRIVER=gles victus_gpu_tests -tc="*ssr*"`: 3/3 cases, 16 assertions. Vulkan: 3/3 cases, 107 assertions.
+- `victus_net_tests`: 30/30 cases, 1,117 assertions.
+- Not verified: the MSVC build itself (no Windows here; CI checks it).
+- Commit: see git log.
 - Next task: planar reflections for water.

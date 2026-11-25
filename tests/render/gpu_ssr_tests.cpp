@@ -183,7 +183,9 @@ TEST_CASE("gpu opaque ssr: capture mode has no history, so it does not trace (AD
     }();
     REQUIRE(f != nullptr);
     CHECK(f->state == PathState::Off);
-    CHECK(f->reason == PathReason::CaptureMode);
+    // GLES has no opaque SSR at all, so the backend reason wins over capture mode there.
+    if (ctx.device().capabilities().backend == rhi::Backend::GLES) CHECK(f->reason == PathReason::Unsupported);
+    else CHECK(f->reason == PathReason::CaptureMode);
     ctx.device().destroy(target);
     ctx.destroy(cube);
 }

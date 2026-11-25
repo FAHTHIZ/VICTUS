@@ -144,7 +144,6 @@ private:
     GpuContext& ctx_;
     rhi::PipelineHandle pipeline_, additive_pipeline_, lit_pipeline_, light_pipeline_, normal_pipeline_, shadow_pipeline_;
     rhi::TextureHandle light_target_, normal_target_, shadow_target_;
-    std::uint32_t normal_w_{0}, normal_h_{0}, shadow_w_{0}, shadow_h_{0};
     bool has_normal_maps_{false}; // a lit batch this frame has a normal map
     std::vector<math::Vec2> caster_points_, caster_fill_, shadow_vertices_;
     std::vector<Caster> casters_;
