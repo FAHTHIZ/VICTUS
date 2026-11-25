@@ -9,11 +9,13 @@
 // through the opaque depth and fetch the hit from the scene copy; misses and fades fall back to the
 // environment, so off-screen objects reflect the sky as before. Planar reflections (ADR-0260):
 // the surface at the reflection plane's height instead samples the scene rendered from the mirrored
-// camera, offset by the wave normal, so objects off screen or behind others reflect too.
+// camera, offset by the wave normal, so objects off screen or behind others reflect too. FFT
+// ocean surfaces (ADR-0261) take their normal and crest Jacobian from the uploaded tile.
 layout(set = 2, binding = 0) uniform sampler2D u_scene; // copy of the HDR colour before water
 layout(set = 2, binding = 1) uniform sampler2D u_depth;
 layout(set = 2, binding = 2) uniform samplerCube u_env;
 layout(set = 2, binding = 3) uniform sampler2D u_planar; // mirrored scene (ADR-0260), stored upside down
+layout(set = 2, binding = 4) uniform sampler2D u_ocean;  // ADR-0261: xyz normal, w Jacobian (repeating tile)
 layout(set = 3, binding = 0) uniform Params {
     mat4 inv_view_proj; // jittered, matches the depth buffer
     vec4 camera;        // xyz position, w time (s)
@@ -35,6 +37,7 @@ layout(set = 3, binding = 0) uniform Params {
     vec4 ssr;       // x steps (0 = off), y max distance (m), z thickness (m), w intensity
     mat4 planar_vp; // world -> planar reflection clip (ADR-0260)
     vec4 planar;    // x this surface samples the planar reflection, y wave distortion (uv)
+    vec4 ocean;     // x 1 / tile size of the FFT ocean (0 = none)
 } u;
 layout(location = 0) in vec3 v_world;
 layout(location = 1) in vec2 v_rest;
@@ -133,6 +136,13 @@ void main() {
         n.z -= a.y * wa * cos(t);
         n.y -= b.y * wa * sin(t);
         jacobian -= b.y * wa * sin(t);
+    }
+    if (u.ocean.x > 0.0) {
+        // FFT ocean (ADR-0261): the tile's normal as slopes, added to the waves' (zero for a pure
+        // spectrum), and its Jacobian for crest foam. Filtered by the hardware mip chain.
+        vec4 o = texture(u_ocean, v_rest * u.ocean.x);
+        n += vec3(o.x, 0.0, o.z) / max(o.y, 0.05);
+        jacobian = min(jacobian, o.w);
     }
     vec3 to_eye = u.camera.xyz - v_world;
     float dist = length(to_eye);

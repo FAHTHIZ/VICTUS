@@ -4193,5 +4193,24 @@ Verified (2-vCPU sandbox, clang Debug `-Werror`, Mesa llvmpipe/lavapipe, `SDL_VI
 - `victus_reference_scenes`: the effects scene drifted only in the pool, which now shows the planar reflection (worst tile FLIP 0.031). Its goldens are regenerated and `planar_reflections` is now an expected feature there; the test passes.
 - Not run: the full `ctest` (the other test binaries do not render water; CI runs them).
 - Not verified: real GPUs, the cost of the extra pass on a phone, MSVC and macOS builds (CI checks them).
-- Commit: see git log.
+- Commit: 5005b45.
 - Next task: FFT ocean spectrum for water.
+
+## 2026-11-25 — FFT ocean spectrum for water (ADR-0261)
+
+Built:
+- `core/ocean.hpp`: `SpectrumDesc` (sanitised), `Spectrum` (Phillips spectrum, seeded amplitudes, scaling to the significant wave height, `evaluate(time)` with four packed inverse 2D FFTs), `Field` (displacement, normal + Jacobian, maxima, revision), periodic bilinear lookups, `sample()` with displacement inversion, and `fft()`.
+- `Water` component: `waves` (`gerstner` / `spectrum`), `spectrum_tile`, `spectrum_resolution`, `spectrum_seed`; `spectrum_desc()`, `water_ocean()` (per-entity cache), `sample_volume()`. `WaterVolume::ocean` carries the tile; buoyancy and `query_water()` use `sample_volume()`.
+- Renderer: `WaterSurface::ocean`, mipmapped RGBA16F displacement and normal textures per drawn spectrum surface, uploaded only when the tile's revision changes (`SceneStats::ocean_surfaces`, `ocean_uploads`). `water.vert` displaces the grid from it at a matching mip, and `water.frag` takes normals and crest Jacobian from it. Culling bounds include the tile's reach. Runtime extraction passes the tile (wall-clock preview outside play).
+- Tests: `tests/core/ocean_tests.cpp` (5 cases: FFT, determinism and height scaling, dispersion and sanitising, crest sharpening, lookups/inversion/normals); `water spectrum: ...` in `tests/script/water_tests.cpp`; `buoyancy: bodies ride FFT ocean waves ...` in `tests/physics/water_buoyancy_tests.cpp`; two GPU cases in `gpu_water_tests.cpp` (grid displacement and upload reuse; runtime extraction).
+
+Verified (2-vCPU sandbox, clang Debug `-Werror`, Mesa llvmpipe/lavapipe, `SDL_VIDEO_DRIVER=offscreen VICTUS_REQUIRE_GPU=1`):
+- `victus_core_tests`: 81/81 cases, 12,554 assertions. Crests have a mean Jacobian of 0.13 and troughs 2.07. With the displacement sign flipped, the crest case fails, so it checks the sign. Inverting the displacement gives heights within 2.6 cm. Normals differ from one-texel central differences by a mean 1 - cos of 0.006.
+- `victus_script_tests -tc="water*"`: 5/5 cases. `victus_physics_tests -tc="buoyancy*"`: 5/5 cases; the raft rides between -0.36 and 0.68 m and is wet in 476 of 479 steps. The contact surface differs from the sampled spectrum by at most 1.8 mm.
+- `victus_gpu_tests -tc="*water*"`: Vulkan 9/9 cases and GLES 9/9 cases. Seen level with the surface, 348 water pixels rise above the rest horizon (356 on GLES), against 0 for flat water. With the vertex displacement removed from `water.vert` the count is 0 and the case fails. From above, the green spread is 99 against 11 for flat water. A repeated tile is not uploaded again, and the image is identical.
+- Evaluation cost (`-O2`, standalone): 0.35 ms at 64 x 64, 7.8 ms at 256 x 256. Debug is about 15 times slower.
+- `compile_shaders.py --check`: up to date. `check_docs.py`: consistent. `readme_assets.py --check`: up to date.
+- Full `ctest -j2` (clang Debug): 50/50 passed (2636 s).
+- Not verified: real GPUs, the editor inspector for the new fields (generated from the schema, not opened), MSVC and macOS builds (CI checks them), and the look at sea scale (only test scenes rendered).
+- Commit: see git log.
+- Next task: impostors for foliage (Rendering gaps).

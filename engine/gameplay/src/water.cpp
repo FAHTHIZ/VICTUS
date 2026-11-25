@@ -10,6 +10,7 @@
 #include <cmath>
 #include <mutex>
 #include <numbers>
+#include <unordered_map>
 
 namespace victus::gameplay {
 
@@ -17,6 +18,15 @@ namespace {
 
 struct WaterClock {
     double time{0};
+};
+
+// ADR-0261: spectra and their latest tiles, per water entity.
+struct OceanCache {
+    struct Entry {
+        std::shared_ptr<const ocean::Spectrum> spectrum;
+        std::shared_ptr<const ocean::Field> field;
+    };
+    std::unordered_map<std::uint64_t, Entry> entries;
 };
 
 constexpr float kGravity = 9.81f;
@@ -78,6 +88,40 @@ WaveSample sample_waves(const WaterWaves& waves, math::Vec2 xz) {
     return s;
 }
 
+ocean::SpectrumDesc spectrum_desc(const WaterComponent& w) {
+    ocean::SpectrumDesc d;
+    d.resolution = static_cast<std::uint32_t>(std::clamp(w.spectrum_resolution, 16, 256));
+    d.tile_size = w.spectrum_tile;
+    d.wave_height = w.wave_height;
+    d.peak_wavelength = w.wavelength;
+    d.direction = finite_or(w.wave_direction, 0) * std::numbers::pi_v<float> / 180.0f;
+    d.choppiness = 2.0f * std::clamp(finite_or(w.steepness, 0), 0.0f, 1.0f);
+    d.speed = w.wave_speed;
+    d.seed = static_cast<std::uint32_t>(w.spectrum_seed);
+    return ocean::sanitize(d);
+}
+
+std::shared_ptr<const ocean::Field> water_ocean(scene::Scene& scene, Entity entity, const WaterComponent& w, double time) {
+    if (w.waves != WaveModel::Spectrum) return nullptr;
+    auto* cache = scene.world().resource<OceanCache>();
+    if (!cache) cache = &scene.world().set_resource<OceanCache>();
+    OceanCache::Entry& e = cache->entries[entity.bits()];
+    const ocean::SpectrumDesc desc = spectrum_desc(w);
+    if (!e.spectrum || !(e.spectrum->desc() == desc)) {
+        e.spectrum = std::make_shared<const ocean::Spectrum>(desc);
+        e.field.reset();
+    }
+    time = std::isfinite(time) ? std::max(time, 0.0) : 0.0;
+    if (!e.field || e.field->time != time) e.field = std::make_shared<const ocean::Field>(e.spectrum->evaluate(time));
+    return e.field;
+}
+
+WaveSample sample_volume(const WaterVolume& v, math::Vec2 xz) {
+    if (!v.ocean) return sample_waves(v.waves, xz);
+    const ocean::Sample o = ocean::sample(*v.ocean, xz);
+    return {o.height, o.normal, o.jacobian};
+}
+
 double water_time(scene::Scene& scene) {
     const auto* c = scene.world().resource<WaterClock>();
     return c ? c->time : 0.0;
@@ -106,11 +150,22 @@ std::vector<WaterVolume> water_volumes(scene::Scene& scene) {
         v.center = {m[3].x, m[3].y, m[3].z};
         v.half_extent = {std::max(finite_or(w.size.x, 0), 0.0f) * 0.5f, std::max(finite_or(w.size.y, 0), 0.0f) * 0.5f};
         v.water = &w;
-        v.waves = water_waves(w, t);
-        for (const WaterWave& wave : v.waves) v.max_height += wave.amplitude;
+        if (w.waves == WaveModel::Spectrum) {
+            v.ocean = water_ocean(scene, e, w, t);
+            v.max_height = v.ocean->max_height;
+        } else {
+            v.waves = water_waves(w, t);
+            for (const WaterWave& wave : v.waves) v.max_height += wave.amplitude;
+        }
         out.push_back(v);
     });
     std::sort(out.begin(), out.end(), [](const WaterVolume& a, const WaterVolume& b) { return a.entity.index < b.entity.index; });
+    // Forget spectra of water that was removed or switched back to Gerstner waves.
+    if (auto* cache = scene.world().resource<OceanCache>()) {
+        std::erase_if(cache->entries, [&](const auto& kv) {
+            return std::none_of(out.begin(), out.end(), [&](const WaterVolume& v) { return v.ocean && v.entity.bits() == kv.first; });
+        });
+    }
     return out;
 }
 
@@ -119,7 +174,7 @@ std::optional<WaterQuery> query_water(scene::Scene& scene, math::Vec3 p) {
     float best_dist = 0;
     for (const WaterVolume& v : water_volumes(scene)) {
         if (std::abs(p.x - v.center.x) > v.half_extent.x || std::abs(p.z - v.center.z) > v.half_extent.y) continue;
-        const WaveSample s = sample_waves(v.waves, {p.x, p.z});
+        const WaveSample s = sample_volume(v, {p.x, p.z});
         WaterQuery q;
         q.water = v.entity;
         q.surface = v.center.y + s.height;
@@ -160,6 +215,10 @@ void register_water_components() {
             .field(&W::damping, "damping", {.min = 0, .max = 20, .speed = 0.01f, .tooltip = "Settles bobbing (1/s while submerged)"})
             .field(&W::current, "current", {.min = -50, .max = 50, .speed = 0.05f, .tooltip = "Flow velocity on X/Z (m/s)"})
             .field(&W::visible, "visible")
+            .enumeration(&W::waves, "waves", {"gerstner", "spectrum"})
+            .field(&W::spectrum_tile, "spectrum_tile", {.min = 1, .max = 10000, .speed = 1, .tooltip = "Spectrum waves: metres before the sea repeats"})
+            .field(&W::spectrum_resolution, "spectrum_resolution", {.min = 16, .max = 256, .tooltip = "Spectrum waves: waves per side (power of two; 64 is typical)"})
+            .field(&W::spectrum_seed, "spectrum_seed", {.min = 0, .max = 1000000, .tooltip = "Spectrum waves: random seed of the sea state"})
             .commit();
     });
 }

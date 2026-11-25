@@ -8,6 +8,7 @@
 #include "doctest.h"
 
 #include <cmath>
+#include <numbers>
 
 using namespace victus;
 using namespace victus::gameplay;
@@ -144,4 +145,61 @@ TEST_CASE("water component: reflected and saved") {
     CHECK(w2->wave_height == doctest::Approx(1.25f));
     CHECK(w2->density == doctest::Approx(1025.0f));
     CHECK(w2->shallow_color.g == doctest::Approx(0.5f));
+}
+
+TEST_CASE("water spectrum: volumes carry the ocean tile, queries and saves use it (ADR-0261)") {
+    register_components();
+    Scene s;
+    const Entity e = s.create("Sea");
+    auto& w = s.world().add<WaterComponent>(e);
+    w.size = {200, 200};
+    w.waves = WaveModel::Spectrum;
+    w.wave_height = 1.5f;
+    w.wavelength = 10.0f;
+    w.spectrum_tile = 48.0f;
+    w.spectrum_resolution = 32;
+    w.spectrum_seed = 3;
+    set_water_time(s, 5.0);
+    const auto vols = water_volumes(s);
+    REQUIRE(vols.size() == 1);
+    REQUIRE(vols[0].ocean != nullptr);
+    CHECK(vols[0].ocean->n == 32);
+    CHECK(vols[0].ocean->tile_size == doctest::Approx(48.0f));
+    CHECK(vols[0].max_height == doctest::Approx(vols[0].ocean->max_height));
+    for (const WaterWave& wave : vols[0].waves) CHECK(wave.amplitude == 0.0f);
+    // The same time reuses the cached tile; a new time or new settings evaluate again.
+    CHECK(water_volumes(s)[0].ocean == vols[0].ocean);
+    CHECK(water_ocean(s, e, w, 5.0) == vols[0].ocean);
+    const auto later = water_ocean(s, e, w, 6.0);
+    CHECK(later != vols[0].ocean);
+    // A query reports the field's surface and normal.
+    const auto q = query_water(s, {4.0f, -20.0f, 7.0f});
+    REQUIRE(q.has_value());
+    const ocean::Sample expect = ocean::sample(*vols[0].ocean, {4.0f, 7.0f});
+    CHECK(q->surface == doctest::Approx(expect.height));
+    CHECK(q->normal.y == doctest::Approx(expect.normal.y));
+    CHECK(q->depth == doctest::Approx(expect.height + 20.0f));
+    // Settings map onto the spectrum: steepness doubles into choppiness, degrees into radians.
+    w.steepness = 0.25f;
+    w.wave_direction = 90.0f;
+    const ocean::SpectrumDesc d = spectrum_desc(w);
+    CHECK(d.choppiness == doctest::Approx(0.5f));
+    CHECK(d.direction == doctest::Approx(std::numbers::pi_v<float> / 2));
+    CHECK(d.peak_wavelength == doctest::Approx(10.0f));
+    CHECK(water_ocean(s, e, w, 6.0) != later);
+    // Gerstner water has no tile.
+    w.waves = WaveModel::Gerstner;
+    CHECK(water_ocean(s, e, w, 6.0) == nullptr);
+    CHECK(water_volumes(s)[0].ocean == nullptr);
+    w.waves = WaveModel::Spectrum;
+
+    const auto doc = s.save();
+    Scene t;
+    REQUIRE(t.load(doc).ok());
+    const auto* w2 = t.world().get<WaterComponent>(t.find_by_name("Sea"));
+    REQUIRE(w2 != nullptr);
+    CHECK(w2->waves == WaveModel::Spectrum);
+    CHECK(w2->spectrum_tile == doctest::Approx(48.0f));
+    CHECK(w2->spectrum_resolution == 32);
+    CHECK(w2->spectrum_seed == 3);
 }

@@ -1994,6 +1994,9 @@ ExtractStats extract_scene(Scene& scene, GpuAssetCache& assets, render::SceneRen
                 ws.roughness = v.water->roughness;
                 ws.resolution = static_cast<std::uint32_t>(std::clamp(v.water->resolution, 16, 512));
                 ws.time = wave_time;
+                // ADR-0261: spectrum water passes its ocean tile (at the preview time outside play).
+                if (v.water->waves == gameplay::WaveModel::Spectrum)
+                    ws.ocean = sim_time > 0.0 ? v.ocean : gameplay::water_ocean(scene, v.entity, *v.water, wt);
                 renderer.add_water(ws);
                 ++stats.water_surfaces;
             }

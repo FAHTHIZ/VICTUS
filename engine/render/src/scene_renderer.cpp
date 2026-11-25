@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "victus/render/scene_renderer.hpp"
 
+#include "victus/render/image.hpp"
+
 #include "victus/core/log.hpp"
 #include "victus/core/jobs.hpp"
 #include "victus/core/profiler.hpp"
@@ -318,6 +320,7 @@ struct WaterFrameUniforms {
     Mat4 view_proj;
     Vec4 center, extent;
     Vec4 wave_a[4], wave_b[4];
+    Vec4 ocean; // ADR-0261: x 1 / tile size (0 = none), y displacement mip
 };
 // reactive_mesh.frag Params (ADR-0187).
 struct ReactiveMeshUniforms {
@@ -334,8 +337,9 @@ struct WaterUniforms {
     Vec4 ssr;       // x steps (0 = off), y max distance, z thickness, w intensity
     Mat4 planar_vp; // ADR-0260: world -> planar reflection clip
     Vec4 planar;    // x this surface samples the planar reflection, y wave distortion
+    Vec4 ocean;     // ADR-0261: x 1 / tile size (0 = none)
 };
-static_assert(sizeof(WaterUniforms) == 3 * 64 + 23 * 16);
+static_assert(sizeof(WaterUniforms) == 3 * 64 + 24 * 16);
 struct BloomDownUniforms {
     Vec4 params;
     Vec4 threshold;
@@ -354,6 +358,7 @@ struct AlphaTestUniforms {
 Aabb water_bounds(const WaterSurface& w) noexcept {
     float amp = 0;
     for (const WaterWave& wave : w.waves) amp += std::abs(wave.amplitude) * (1.0f + std::abs(wave.q));
+    if (w.ocean) amp += w.ocean->max_height + w.ocean->max_horizontal;
     return {{w.center.x - w.half_extent.x - amp, w.center.y - amp, w.center.z - w.half_extent.y - amp},
             {w.center.x + w.half_extent.x + amp, w.center.y + amp, w.center.z + w.half_extent.y + amp}};
 }
@@ -1513,6 +1518,9 @@ SceneRenderer::~SceneRenderer() {
         if (pl) d.destroy(pl);
     for (auto pl : {water_pipeline_, water_depth_pipeline_})
         if (pl) d.destroy(pl);
+    for (const OceanTexture& t : ocean_textures_)
+        for (auto tex : {t.displacement, t.normal})
+            if (tex) d.destroy(tex);
     for (const auto& row : overdraw_)
         for (auto pl : row)
             if (pl) d.destroy(pl);
@@ -2147,6 +2155,10 @@ void SceneRenderer::add_water(const WaterSurface& water) {
     w.refraction = std::isfinite(w.refraction) ? std::clamp(w.refraction, 0.0f, 0.2f) : 0.0f;
     w.roughness = std::isfinite(w.roughness) ? std::clamp(w.roughness, 0.01f, 1.0f) : 0.06f;
     w.time = std::isfinite(w.time) ? w.time : 0.0f;
+    if (w.ocean && (w.ocean->n < 2 || w.ocean->displacement.size() != static_cast<std::size_t>(w.ocean->n) * w.ocean->n ||
+                    w.ocean->normal.size() != w.ocean->displacement.size() || !(w.ocean->tile_size > 0) ||
+                    !std::isfinite(w.ocean->max_height + w.ocean->max_horizontal)))
+        w.ocean.reset();
     waters_.push_back(w);
 }
 
@@ -4179,6 +4191,69 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         for (auto it = candidates.rbegin(); it != candidates.rend(); ++it) water_draws.push_back(it->second);
     }
     stats_.water_surfaces = static_cast<std::uint32_t>(water_draws.size());
+    // FFT ocean tiles (ADR-0261): each drawn spectrum surface gets a slot; a tile already uploaded
+    // (same evaluation) is not uploaded again. Mips are box-filtered on the CPU (the tile wraps).
+    std::vector<int> water_ocean_slot(water_draws.size(), -1);
+    stats_.ocean_surfaces = 0;
+    stats_.ocean_uploads = 0;
+    for (std::size_t i = 0; i < water_draws.size(); ++i) {
+        const ocean::Field* field = water_draws[i]->ocean.get();
+        if (!field) continue;
+        const auto slot = static_cast<std::size_t>(stats_.ocean_surfaces++);
+        water_ocean_slot[i] = static_cast<int>(slot);
+        if (ocean_textures_.size() <= slot) ocean_textures_.resize(slot + 1);
+        OceanTexture& ot = ocean_textures_[slot];
+        if (ot.n == field->n && ot.revision == field->revision && ot.displacement) continue;
+        const std::uint32_t n = field->n;
+        const auto mips = static_cast<std::uint32_t>(std::bit_width(n));
+        if (ot.n != n || !ot.displacement) {
+            for (auto tex : {ot.displacement, ot.normal})
+                if (tex) dev.destroy(tex);
+            ot = {};
+            for (int k = 0; k < 2; ++k) {
+                rhi::TextureDesc d;
+                d.name = k == 0 ? "ocean_displacement" : "ocean_normal";
+                d.format = rhi::Format::RGBA16_FLOAT;
+                d.width = d.height = n;
+                d.mip_levels = mips;
+                d.usage = rhi::TextureUsageSampled;
+                auto t = dev.create_texture(d);
+                if (!t) return std::move(t).error();
+                (k == 0 ? ot.displacement : ot.normal) = t.value();
+            }
+            ot.n = n;
+        }
+        for (int k = 0; k < 2; ++k) {
+            std::vector<Vec4> level = k == 0 ? field->displacement : field->normal;
+            std::uint32_t size = n;
+            std::vector<std::uint16_t> half;
+            for (std::uint32_t mip = 0; mip < mips; ++mip) {
+                half.resize(static_cast<std::size_t>(size) * size * 4);
+                for (std::size_t t = 0; t < level.size(); ++t) {
+                    half[t * 4 + 0] = float_to_half(level[t].x);
+                    half[t * 4 + 1] = float_to_half(level[t].y);
+                    half[t * 4 + 2] = float_to_half(level[t].z);
+                    half[t * 4 + 3] = float_to_half(level[t].w);
+                }
+                cmd.upload_texture(k == 0 ? ot.displacement : ot.normal,
+                                   {reinterpret_cast<const std::uint8_t*>(half.data()), half.size() * sizeof(std::uint16_t)}, mip);
+                if (size == 1) break;
+                const std::uint32_t next = size / 2;
+                std::vector<Vec4> down(static_cast<std::size_t>(next) * next);
+                for (std::uint32_t y = 0; y < next; ++y)
+                    for (std::uint32_t x = 0; x < next; ++x) {
+                        const Vec4 a = level[(2 * y) * size + 2 * x], b = level[(2 * y) * size + 2 * x + 1];
+                        const Vec4 c = level[(2 * y + 1) * size + 2 * x], e = level[(2 * y + 1) * size + 2 * x + 1];
+                        down[static_cast<std::size_t>(y) * next + x] = {(a.x + b.x + c.x + e.x) * 0.25f, (a.y + b.y + c.y + e.y) * 0.25f,
+                                                                        (a.z + b.z + c.z + e.z) * 0.25f, (a.w + b.w + c.w + e.w) * 0.25f};
+                    }
+                level = std::move(down);
+                size = next;
+            }
+        }
+        ot.revision = field->revision;
+        ++stats_.ocean_uploads;
+    }
     stats_.particles = 0;
     stats_.ribbon_vertices = 0;
     for (const ParticleBatch& b : particle_draws)
@@ -5434,7 +5509,18 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 f.wave_a[i] = {wave.direction.x, wave.direction.y, wave.k, wave.phase};
                 f.wave_b[i] = {wave.amplitude, wave.q, 0, 0};
             }
+            if (w.ocean) {
+                // Displacement mip whose texel matches about two grid cells, so the grid does not alias.
+                const float texel = w.ocean->tile_size / static_cast<float>(w.ocean->n);
+                const float lod = std::max(0.0f, std::log2(std::max(f.extent.z / texel, 1e-6f)));
+                f.ocean = {1.0f / w.ocean->tile_size, lod, 0, 0};
+            }
             return f;
+        };
+        auto ocean_textures = [this, slots = water_ocean_slot](std::size_t i) {
+            const int s = slots[i];
+            if (s < 0) return std::pair{ctx_.black(), ctx_.black()};
+            return std::pair{ocean_textures_[static_cast<std::size_t>(s)].displacement, ocean_textures_[static_cast<std::size_t>(s)].normal};
         };
         graph.add_pass(
             "water",
@@ -5445,7 +5531,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 b.write_color(hdr, rhi::LoadOp::Load);
                 write_reactive(b);
             },
-            [&, base, frame_of, wenv, water_scene, planar_tex](PassContext& ctx) {
+            [&, base, frame_of, ocean_textures, wenv, water_scene, planar_tex](PassContext& ctx) {
                 rhi::RenderPass& pass = *ctx.pass;
                 pass.bind_pipeline(reactive ? reactive_pl[2][0] : water_pipeline_);
                 pass.bind_texture(rhi::ShaderStage::Fragment, 0, ctx.texture(water_scene), ctx_.linear_clamp());
@@ -5453,8 +5539,12 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                 pass.bind_texture(rhi::ShaderStage::Fragment, 2, wenv ? wenv->cube() : ctx_.black_cube(), ctx_.linear_clamp());
                 pass.bind_texture(rhi::ShaderStage::Fragment, 3, planar_tex.valid() ? ctx.texture(planar_tex) : ctx_.black(),
                                   ctx_.linear_clamp());
-                for (const WaterSurface* w : water_draws) {
+                for (std::size_t di = 0; di < water_draws.size(); ++di) {
+                    const WaterSurface* w = water_draws[di];
                     const WaterFrameUniforms f = frame_of(*w);
+                    const auto [ocean_disp, ocean_normal] = ocean_textures(di);
+                    pass.bind_texture(rhi::ShaderStage::Vertex, 0, ocean_disp, ctx_.linear_repeat());
+                    pass.bind_texture(rhi::ShaderStage::Fragment, 4, ocean_normal, ctx_.linear_repeat());
                     ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, f);
                     WaterUniforms u = base;
                     u.camera = Vec4(camera_.position, w->time);
@@ -5466,6 +5556,7 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
                     // ADR-0260: surfaces at the reflection's height sample it; others keep SSR.
                     const bool mirrored = planar_tex.valid() && w->planar_reflection && std::fabs(w->center.y - planar->height) < 1e-3f;
                     u.planar = {mirrored ? 1.0f : 0.0f, 0.5f * w->refraction + 0.01f, 0, 0};
+                    u.ocean = f.ocean;
                     for (std::size_t i = 0; i < 4; ++i) {
                         u.wave_a[i] = f.wave_a[i];
                         u.wave_b[i] = f.wave_b[i];
@@ -5477,10 +5568,12 @@ Status SceneRenderer::render(rhi::CommandBuffer& cmd, rhi::TextureHandle target,
         graph.add_pass(
             "water_depth",
             [&](PassBuilder& b) { b.write_depth(depth, rhi::LoadOp::Load, 1.0f); },
-            [&, frame_of](PassContext& ctx) {
+            [&, frame_of, ocean_textures](PassContext& ctx) {
                 rhi::RenderPass& pass = *ctx.pass;
                 pass.bind_pipeline(water_depth_pipeline_);
-                for (const WaterSurface* w : water_draws) {
+                for (std::size_t di = 0; di < water_draws.size(); ++di) {
+                    const WaterSurface* w = water_draws[di];
+                    pass.bind_texture(rhi::ShaderStage::Vertex, 0, ocean_textures(di).first, ctx_.linear_repeat());
                     ctx.cmd.push_uniforms(rhi::ShaderStage::Vertex, 0, frame_of(*w));
                     pass.draw(6u * w->resolution * w->resolution);
                 }

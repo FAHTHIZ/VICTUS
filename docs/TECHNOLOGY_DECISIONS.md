@@ -3047,6 +3047,24 @@ The axis is drawn from the emitter's random stream only for mesh emitters, so ot
 - The one-cell pad covers rotated tiles and filtering at the edges. Tiles larger than their cell are not supported by the pad.
 - Culling assumes the map lies in the batch's z = 0 plane, as all 2D tilemaps do.
 
+### ADR-0261: FFT ocean spectrum for water
+
+**Status:** Accepted (2026-11-25).
+
+**Context:** Water (ADR-0095) is four Gerstner waves derived from one primary wave. Up close that reads as a regular pattern, not a sea. Rendering gaps (ROADMAP) and GAP-16 listed an FFT ocean as the last open water item. Unity HDRP, Unreal (Water plugin) and Godot sample projects all use Tessendorf-style spectra. Buoyancy must see the same surface the player sees, on a headless server too.
+
+**Decision:**
+- `victus::ocean` in `core` (`core/ocean.hpp`): a Phillips spectrum (Tessendorf 2001) on an N x N grid of wave vectors, N a power of two from 16 to 256, over a world-aligned tile that repeats every `tile_size` metres. Settings: wave height, peak wavelength, direction, choppiness, speed and seed. The random amplitudes come from SplitMix64 plus Box-Muller, so a seed gives the same sea on every platform up to float maths. Waves running against the wind are scaled by 0.07, waves within two texels of the Nyquist limit are suppressed, and the spectrum is scaled so that 4 x the RMS height at t = 0 equals the requested significant wave height. The peak wavelength sets the Phillips L (peak at `2 pi sqrt(2) L`).
+- `Spectrum::evaluate(time)` advances every wave by deep-water dispersion (phase in double precision). Four complex inverse FFTs give eight real fields, packed in pairs: height, the two choppy displacements (x = x0 - lambda D, so crests sharpen as with Gerstner Q > 0), the two slopes and three displacement derivatives. The result is a `Field` of displacement and of the exact normal of the displaced surface plus the Jacobian per texel. `sample()` returns the height above a world point by fixed-point inversion of the horizontal displacement, as for Gerstner waves. The FFT is an iterative radix-2 transform with precomputed twiddles and complex products written out: 0.35 ms per evaluation at 64 x 64 and 7.8 ms at 256 x 256 with `-O2` here.
+- The `Water` component gains `waves` (`gerstner` or `spectrum`), `spectrum_tile` (100 m), `spectrum_resolution` (64) and `spectrum_seed`. For a spectrum, the existing fields map as follows: `wave_height` is the significant height, `wavelength` the peak, `wave_direction` the wind, `steepness` x 2 the choppiness and `wave_speed` the speed. `water_volumes()` attaches the tile at the water time, cached per entity: the spectrum is rebuilt when the settings change, the tile when the time does, and cache entries are dropped with their water. `sample_volume()` dispatches to the right model, and buoyancy and `query_water()` (scripts' `water.query` / `water.height`) use it.
+- The renderer takes the tile through `WaterSurface::ocean`. It uploads two RGBA16F textures per drawn spectrum surface: displacement, and normal plus Jacobian. Their mip chains are box-filtered on the CPU, since the tile wraps. A tile is uploaded only when its evaluation `revision` changes, and `SceneStats::ocean_surfaces` and `ocean_uploads` count both. `water.vert` displaces the grid at the mip whose texel matches the grid cell, so a coarse grid does not alias; border vertices still keep their horizontal position. `water.frag` adds the tile's normal (as slopes) to the waves' and takes the smaller Jacobian for crest foam. Culling bounds grow by the tile's largest height and horizontal displacement. Runtime extraction passes the same tile the physics used during play; outside play, the editor preview evaluates one at wall-clock time.
+
+**Consequences:**
+- Spectrum seas look irregular and wind-driven, and bodies float on exactly the drawn surface. The buoyancy test sees at most 2 mm between the contact surface and the sampled spectrum.
+- The work is CPU work per fixed step, and per frame in the editor. 64 x 64 is cheap; 256 x 256 costs several milliseconds and is meant for hero water. There is no compute-shader FFT, because GLES 3.0 has no compute.
+- One tile without cascades, so wide seas repeat every `spectrum_tile` metres. Folding crests (Jacobian < 0) are not treated specially, and foam does not persist between frames.
+- Gerstner water is unchanged, and Gerstner and spectrum share every other water feature (reflections, refraction, foam, fog, the TAA reactive mask).
+
 ### ADR-0260: Planar reflections for water
 
 **Status:** Accepted (2026-11-25).

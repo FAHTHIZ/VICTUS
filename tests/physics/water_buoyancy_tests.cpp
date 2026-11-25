@@ -8,6 +8,7 @@
 
 #include <doctest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <string>
 #include <vector>
@@ -144,4 +145,41 @@ TEST_CASE("buoyancy: water_entered / water_exited events and outside bodies") {
     REQUIRE(seen.size() == 2);
     CHECK(seen[1] == "water_exited");
     CHECK(world->water_contact(e).water.is_null());
+}
+
+TEST_CASE("buoyancy: bodies ride FFT ocean waves at the surface the spectrum reports (ADR-0261)") {
+    Scene scene;
+    const Entity water = pool(scene);
+    auto& w = *scene.world().get<gameplay::WaterComponent>(water);
+    w.waves = gameplay::WaveModel::Spectrum;
+    w.wave_height = 1.0f;
+    w.wavelength = 12.0f;
+    w.spectrum_tile = 64.0f;
+    const Entity raft = crate(scene, 500.0f, {2, 0.5f, -3}, {2, 0.5f, 2});
+    auto world = make_world();
+    float lo = 1e9f, hi = -1e9f, worst = 0;
+    int wet = 0;
+    for (int i = 0; i < 600; ++i) {
+        gameplay::advance_water_time(scene, kDt);
+        world->step(scene, kDt);
+        if (i > 120) {
+            const float y = scene.world().get<Transform>(raft)->position.y;
+            lo = std::min(lo, y);
+            hi = std::max(hi, y);
+            const WaterContact c = world->water_contact(raft);
+            if (c.water != water) continue; // briefly clear of a falling trough
+            ++wet;
+            // The contact's surface is the spectrum's height at the body (same field the renderer draws).
+            const auto vols = gameplay::water_volumes(scene);
+            const math::Vec3 p = scene.world().get<Transform>(raft)->position;
+            const float expect = gameplay::sample_volume(vols[0], {p.x, p.z}).height;
+            worst = std::max(worst, std::abs(c.surface - expect));
+        }
+    }
+    MESSAGE("raft height range " << lo << " .. " << hi << ", in the water " << wet << "/479 steps, worst surface mismatch " << worst << " m");
+    CHECK(wet > 400);
+    CHECK(hi - lo > 0.1f); // bobs with the sea
+    CHECK(hi < 1.5f);
+    CHECK(lo > -1.5f);
+    CHECK(worst < 0.25f);
 }

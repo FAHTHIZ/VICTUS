@@ -4,13 +4,17 @@
 // buffer) and is displaced by the same four waves gameplay::sample_waves evaluates on the CPU,
 // so buoyancy matches what is drawn. Waves shorter than ~4 grid cells fade out of the geometry
 // (they would alias) but stay in the per-pixel normal. Border vertices keep their horizontal
-// position so the surface always covers its volume.
+// position so the surface always covers its volume. FFT ocean surfaces (ADR-0261) add the
+// displacement tile gameplay evaluates for buoyancy, sampled at the mip whose texel matches the
+// grid's cell size.
+layout(set = 0, binding = 0) uniform sampler2D u_ocean; // xyz displacement, repeating tile
 layout(set = 1, binding = 0) uniform Frame {
     mat4 view_proj;
     vec4 center;    // xyz rest surface centre, w cells per side
     vec4 extent;    // xy half extent (m), z cell size (m)
     vec4 wave_a[4]; // xy direction, z k, w phase
     vec4 wave_b[4]; // x amplitude, y q (horizontal displacement factor)
+    vec4 ocean;     // x 1 / tile size (0 = no ocean), y displacement mip
 } frame;
 layout(location = 0) out vec3 v_world;
 layout(location = 1) out vec2 v_rest;
@@ -35,6 +39,10 @@ void main() {
         p.x += a.x * c;
         p.z += a.y * c;
         p.y += amp * sin(t);
+    }
+    if (frame.ocean.x > 0.0) {
+        vec3 d = textureLod(u_ocean, xz * frame.ocean.x, frame.ocean.y).xyz;
+        p += vec3(d.x * inner, d.y, d.z * inner);
     }
     v_world = p;
     v_rest = xz;

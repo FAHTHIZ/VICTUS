@@ -9,6 +9,8 @@
 #include "victus/runtime/scene_rendering.hpp"
 #include "victus/scene/scene.hpp"
 
+#include <algorithm>
+#include <memory>
 #include <optional>
 
 using namespace victus;
@@ -417,4 +419,116 @@ TEST_CASE("gpu water: planar reflections mirror objects off screen and clip what
     CHECK(r.stats().planar_reflection_draws == 0);
     CHECK(planar_feature().reason == PathReason::NotNeeded);
     ctx.destroy(cube);
+}
+
+TEST_CASE("gpu water: FFT ocean displaces the grid from the uploaded tile and reuses it (ADR-0261)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    SceneRenderer& r = *sr.value();
+    ocean::SpectrumDesc desc;
+    desc.resolution = 64;
+    desc.tile_size = 32;
+    desc.wave_height = 2.0f;
+    desc.peak_wavelength = 10;
+    desc.seed = 5;
+    const ocean::Spectrum spectrum(desc);
+    auto sea = [&](std::shared_ptr<const ocean::Field> field) {
+        WaterSurface w;
+        w.center = {0, 0, 0};
+        w.half_extent = {20, 20};
+        w.clarity = 0.2f;
+        w.foam = 0;
+        w.resolution = 256;
+        w.planar_reflection = false;
+        w.ocean = std::move(field);
+        return w;
+    };
+    // Low and level with the surface, outside the volume, looking along it: flat water ends at
+    // the horizon row; crests of the spectrum rise above it.
+    const Camera3D level = Camera3D::look_at({0, 0.2f, 24}, {0, 0.2f, 0});
+    auto above_horizon = [&](const Shot& s) {
+        int n = 0;
+        for (std::uint32_t y = 0; y + 2 < H / 2; ++y)
+            for (std::uint32_t x = 0; x < W; ++x)
+                if (channel(s.at(x, y), 0) + channel(s.at(x, y), 1) + channel(s.at(x, y), 2) > 12) ++n;
+        return n;
+    };
+    const Shot flat = shoot(r, [&](SceneRenderer& rr) { rr.add_water(sea(nullptr)); }, "water_ocean_flat", level);
+    CHECK(flat.stats.water_surfaces == 1);
+    CHECK(flat.stats.ocean_surfaces == 0);
+    CHECK(above_horizon(flat) == 0);
+
+    const auto field = std::make_shared<const ocean::Field>(spectrum.evaluate(3.0));
+    REQUIRE(field->max_height > 0.5f);
+    const Shot wavy = shoot(r, [&](SceneRenderer& rr) { rr.add_water(sea(field)); }, "water_ocean_level", level);
+    CHECK(wavy.stats.ocean_surfaces == 1);
+    CHECK(wavy.stats.ocean_uploads == 1);
+    const int crest_pixels = above_horizon(wavy);
+    MESSAGE("water pixels above the rest horizon: " << crest_pixels);
+    CHECK(crest_pixels > 50);
+
+    // The same evaluation is not uploaded again; the next one is, and the picture moves.
+    const Shot again = shoot(r, [&](SceneRenderer& rr) { rr.add_water(sea(field)); }, nullptr, level);
+    CHECK(again.stats.ocean_uploads == 0);
+    CHECK(again.px == wavy.px);
+    const auto next = std::make_shared<const ocean::Field>(spectrum.evaluate(4.5));
+    const Shot moved = shoot(r, [&](SceneRenderer& rr) { rr.add_water(sea(next)); }, nullptr, level);
+    CHECK(moved.stats.ocean_uploads == 1);
+    CHECK(moved.px != wavy.px);
+
+    // From above, the tile's normals shade the surface: far more variation than flat water.
+    auto spread = [](const Shot& s) {
+        int lo = 255, hi = 0;
+        for (std::uint32_t y = H / 2; y < H; ++y)
+            for (std::uint32_t x = 0; x < W; ++x) {
+                const int g = channel(s.at(x, y), 1);
+                lo = std::min(lo, g);
+                hi = std::max(hi, g);
+            }
+        return hi - lo;
+    };
+    const Shot top_flat = shoot(r, [&](SceneRenderer& rr) { rr.add_water(sea(nullptr)); });
+    const Shot top_wavy = shoot(r, [&](SceneRenderer& rr) { rr.add_water(sea(field)); }, "water_ocean_above");
+    MESSAGE("green spread: flat " << spread(top_flat) << ", ocean " << spread(top_wavy));
+    CHECK(spread(top_wavy) > spread(top_flat) + 10);
+}
+
+TEST_CASE("gpu water: spectrum Water components render their ocean through runtime extraction (ADR-0261)") {
+    VICTUS_REQUIRE_GPU_OR_SKIP();
+    auto& ctx = *gpu().ctx;
+    gameplay::register_components();
+    auto sr = SceneRenderer::create(ctx);
+    REQUIRE(sr.ok());
+    SceneRenderer& r = *sr.value();
+    runtime::GpuAssetCache cache(ctx, nullptr);
+    scene::Scene s;
+    const auto cam = s.create("Camera");
+    s.world().add<scene::CameraComponent>(cam);
+    s.world().get<scene::Transform>(cam)->position = {0, 3, 4};
+    s.world().get<scene::Transform>(cam)->rotation = math::Quat::axis_angle({1, 0, 0}, -0.6f);
+    const auto light = s.create("Sun");
+    s.world().add<scene::LightComponent>(light).shadows = false;
+    const auto sea = s.create("Sea");
+    auto& w = s.world().add<gameplay::WaterComponent>(sea);
+    w.waves = gameplay::WaveModel::Spectrum;
+    w.wave_height = 1.0f;
+    w.spectrum_tile = 40;
+    gameplay::set_water_time(s, 2.0);
+    s.update_transforms();
+    runtime::SceneViewSettings settings;
+    settings.environment = flat_env();
+    const runtime::ExtractStats st = runtime::extract_scene(s, cache, r, settings);
+    CHECK(st.water_surfaces == 1);
+    r.set_settings(flat_settings());
+    auto& dev = ctx.device();
+    auto target = test::make_target(W, H);
+    auto cmd = dev.begin_commands();
+    REQUIRE(r.render(cmd, target, W, H, rhi::Format::RGBA8_UNORM).ok());
+    cmd.submit_and_wait();
+    dev.destroy(target);
+    CHECK(r.stats().water_surfaces == 1);
+    CHECK(r.stats().ocean_surfaces == 1);
+    CHECK(r.stats().ocean_uploads == 1);
 }

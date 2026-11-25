@@ -4,6 +4,7 @@
 // debug lines, dual-filter bloom, auto exposure, tonemapping/grading and FXAA. Every feature
 // scales through RenderSettings / QualityTier so the same content runs on phones and desktops.
 #pragma once
+#include "victus/core/ocean.hpp"
 #include "victus/render/environment_map.hpp"
 #include "victus/render/gpu_context.hpp"
 #include "victus/render/irradiance_volume.hpp"
@@ -405,6 +406,9 @@ struct WaterSurface {
     float time{0};                 // seconds; animates ripples and foam
     // ADR-0260: may take this frame's planar reflection (RenderSettings::planar_reflections).
     bool planar_reflection{true};
+    // ADR-0261: FFT ocean tile (world-aligned, repeating); added to the waves when set. The
+    // renderer uploads it as two mipmapped RGBA16F textures (displacement, normal + Jacobian).
+    std::shared_ptr<const ocean::Field> ocean;
 };
 inline constexpr std::size_t kMaxWaterSurfaces = 16;
 
@@ -917,6 +921,8 @@ struct SceneStats {
     std::uint64_t transparent_triangles{0};
     std::uint32_t decals{0};           // decals drawn (after frustum culling)
     std::uint32_t water_surfaces{0};   // water surfaces drawn (after frustum culling)
+    std::uint32_t ocean_surfaces{0};   // of those, FFT ocean surfaces (ADR-0261)
+    std::uint32_t ocean_uploads{0};    // ocean tiles uploaded this frame (ADR-0261)
     std::uint32_t planar_reflection_draws{0}; // ADR-0260: opaque draws in the planar reflection (0: none rendered)
     std::uint32_t reflection_probes{0}, probe_draws{0}; // probes used / visible draws lit by a probe
     std::uint32_t instances_uploaded{0};
@@ -1567,6 +1573,13 @@ private:
     std::uint32_t probe_requests_{0}, probe_unbaked_{0}, probe_over_budget_{0}; // render-path report (ADR-0105)
     std::vector<Decal> decals_;
     std::vector<WaterSurface> waters_;
+    // ADR-0261: uploaded ocean tiles, one per drawn spectrum surface (reused across frames).
+    struct OceanTexture {
+        rhi::TextureHandle displacement, normal;
+        std::uint32_t n{0};
+        std::uint64_t revision{0};
+    };
+    std::vector<OceanTexture> ocean_textures_;
     const IrradianceVolume* volume_{nullptr};
     float volume_intensity_{1.0f}, volume_normal_offset_{0.0f};
     bool volume_baked_{false};

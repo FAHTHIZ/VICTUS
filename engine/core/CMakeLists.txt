@@ -30,6 +30,7 @@ victus_add_module(core
         src/log.cpp
         src/migration.cpp
         src/math.cpp
+        src/ocean.cpp
         src/os_random.cpp
         src/pack.cpp
         src/zip.cpp

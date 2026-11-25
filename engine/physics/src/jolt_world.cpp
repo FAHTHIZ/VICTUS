@@ -927,7 +927,7 @@ private:
                         break;
                     }
                 if (!vol) continue;
-                const gameplay::WaveSample ws = gameplay::sample_waves(vol->waves, {c.GetX(), c.GetZ()});
+                const gameplay::WaveSample ws = gameplay::sample_volume(*vol, {c.GetX(), c.GetZ()});
                 const float surface = vol->center.y + ws.height;
                 if (box.mMin.GetY() >= surface) continue;
                 JPH::BodyLockWrite lock(system_->GetBodyLockInterface(), b.id);

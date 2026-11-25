@@ -1,20 +1,29 @@
 // SPDX-License-Identifier: Apache-2.0
 // Water volumes (ADR-0095): an axis-aligned body of water whose surface is a sum of Gerstner
-// waves. The same wave set drives rendering (render::WaterSurface), Jolt buoyancy and script
-// queries, so floating objects ride the waves the player sees.
+// waves, or an FFT ocean spectrum (ADR-0261). The same waves drive rendering
+// (render::WaterSurface), Jolt buoyancy and script queries, so floating objects ride the waves
+// the player sees.
 #pragma once
 
 #include "victus/core/math.hpp"
+#include "victus/core/ocean.hpp"
 #include "victus/scene/scene.hpp"
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <vector>
 
 namespace victus::gameplay {
 
 using scene::Entity;
+
+// Gerstner: four analytic waves derived from the primary one (ADR-0095). Spectrum: a Phillips
+// spectrum of N x N waves evaluated by FFT on a tile that repeats every spectrum_tile metres
+// (ADR-0261); wave_height is then the significant wave height, wavelength the spectrum's peak,
+// wave_direction the wind and steepness the choppiness (x 2).
+enum class WaveModel : std::uint8_t { Gerstner, Spectrum };
 
 // Authored on an entity: the surface rests at the entity's world Y, centred on its world XZ
 // (rotation and scale are ignored; waves are defined in world space so adjacent volumes match).
@@ -38,7 +47,14 @@ struct WaterComponent {
     float damping{1.5f};          // 1/s linear damping while submerged (wave radiation; settles bobbing)
     math::Vec2 current{0, 0};     // flow velocity on XZ, m/s (pushes floating bodies)
     bool visible{true};
+    WaveModel waves{WaveModel::Gerstner};
+    float spectrum_tile{100.0f};             // metres; the spectrum repeats with this period
+    std::int32_t spectrum_resolution{64};    // waves per side (16..256, power of two)
+    std::int32_t spectrum_seed{1};
 };
+
+// The component's ocean spectrum settings (ADR-0261).
+[[nodiscard]] ocean::SpectrumDesc spectrum_desc(const WaterComponent& water);
 
 inline constexpr std::size_t kWaterWaves = 4;
 
@@ -86,8 +102,15 @@ struct WaterVolume {
     math::Vec2 half_extent;
     float max_height{0};    // largest crest above rest
     const WaterComponent* water{nullptr};
-    WaterWaves waves;
+    WaterWaves waves;                          // all zero for a spectrum
+    std::shared_ptr<const ocean::Field> ocean; // WaveModel::Spectrum: the tile at the water time
 };
+// The volume's surface at world `xz` (Gerstner waves or the ocean field).
+[[nodiscard]] WaveSample sample_volume(const WaterVolume& volume, math::Vec2 xz);
+// The ocean tile of a spectrum volume at `time`, cached per entity (the spectrum is rebuilt when
+// its settings change, the tile when the time does). Null for Gerstner water.
+[[nodiscard]] std::shared_ptr<const ocean::Field> water_ocean(scene::Scene& scene, Entity entity,
+                                                              const WaterComponent& water, double time);
 // All visible-or-not water volumes with their waves at the current water time.
 [[nodiscard]] std::vector<WaterVolume> water_volumes(scene::Scene& scene);
 

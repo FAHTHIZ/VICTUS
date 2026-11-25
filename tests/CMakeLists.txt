@@ -15,6 +15,7 @@ victus_add_test(victus_core_tests
         core/log_tests.cpp
         core/migration_tests.cpp
         core/math_tests.cpp
+        core/ocean_tests.cpp
         core/memory_tests.cpp
         core/pack_tests.cpp
         core/process_tests.cpp
