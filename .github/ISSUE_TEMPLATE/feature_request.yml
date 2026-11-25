@@ -1,0 +1,30 @@
+name: Feature idea
+description: Suggest a capability, workflow or improvement for VICTUS
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to make?
+      description: Describe the game, scene or workflow, not only the feature.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would help?
+    validations:
+      required: true
+  - type: textarea
+    id: elsewhere
+    attributes:
+      label: How do other engines handle it?
+      description: Godot, Unity, Unreal or others, with documentation links if you have them.
+  - type: checkboxes
+    id: checked
+    attributes:
+      label: Before posting
+      options:
+        - label: I checked ROADMAP.md and docs/KNOWN_LIMITATIONS.md for this item.
+          required: true

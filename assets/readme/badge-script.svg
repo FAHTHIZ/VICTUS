@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="247" height="30" viewBox="0 0 247 30" role="img" aria-label="scripting: Luau · graphs · C++">
+<title>scripting: Luau · graphs · C++</title>
+<defs>
+<linearGradient id="script-bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#111A2E"/><stop offset="1" stop-color="#05070D"/></linearGradient>
+<linearGradient id="script-val" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#A855F7"/><stop offset="1" stop-color="#818CF8"/></linearGradient>
+<linearGradient id="script-edge" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#A855F7" stop-opacity=".6"/><stop offset=".5" stop-color="#A855F7" stop-opacity=".15"/><stop offset="1" stop-color="#818CF8" stop-opacity=".55"/></linearGradient>
+<linearGradient id="script-shine" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".5" stop-color="#fff" stop-opacity=".22"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<clipPath id="script-clip"><rect width="247" height="30" rx="15"/></clipPath>
+</defs>
+<style>@media (prefers-reduced-motion: no-preference) {
+.sw{animation:sw 9s 2s cubic-bezier(.4,0,.2,1) infinite}
+@keyframes sw{0%{transform:translateX(-80px)}20%,100%{transform:translateX(327px)}}
+}</style>
+<g clip-path="url(#script-clip)">
+<rect width="247" height="30" fill="url(#script-bg)"/>
+<rect x="110.6" y="3" width="133.4" height="24" rx="12" fill="url(#script-val)"/>
+<rect class="sw" x="-60" y="0" width="46" height="30" fill="url(#script-shine)" transform="translate(-80 0)"/>
+</g>
+<rect x=".5" y=".5" width="246" height="29" rx="14.5" fill="none" stroke="url(#script-edge)"/>
+<g transform="translate(12 6) scale(.75)" fill="none" stroke="#A855F7" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5M14 4l-4 16"/></g>
+<text x="38" y="18.8" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="700" fill="#A9B7D0" letter-spacing=".04em">SCRIPTING</text>
+<text x="177.3" y="19.4" text-anchor="middle" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#05070D">Luau · graphs · C++</text>
+</svg>

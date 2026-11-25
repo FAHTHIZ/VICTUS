@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="168" viewBox="0 0 1280 168" role="img" aria-labelledby="t d">
+<title id="t">From clone to shipped game in three steps</title>
+<desc id="d">01 build with the dev CMake preset; 02 create a game with victus new and the nocode template; 03 export it with victus export.</desc>
+<style>@media (prefers-reduced-motion: no-preference) {
+.s0{animation:fade .9s 0.15s cubic-bezier(.2,.7,.1,1) both}.s1{animation:fade .9s 0.45s cubic-bezier(.2,.7,.1,1) both}.s2{animation:fade .9s 0.75s cubic-bezier(.2,.7,.1,1) both}
+@keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+}</style>
+<g class="s0">
+<rect x="1.0" y="1" width="408.7" height="166" rx="18" fill="#0D1424" stroke="#1E2A44"/>
+<text x="26.0" y="50" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="30" font-weight="800" fill="#22D3EE">01</text>
+<text x="76.0" y="47" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="18" font-weight="800" fill="#E6F4FF">Build it</text>
+<rect x="22.0" y="70" width="366.7" height="40" rx="10" fill="#05070D" stroke="#1E2A44"/>
+<text x="34.0" y="95" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="11.2" fill="#E6F4FF"><tspan fill="#22D3EE">$</tspan>&#160;cmake --preset dev &amp;&amp; cmake --build --preset dev</text>
+<text x="26.0" y="142" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" fill="#93A3C0">Pinned, hash-verified dependencies.</text>
+</g><path d="M412.7 90h20" stroke="#1E2A44" stroke-width="2"/><path d="M426.7 85l6 5-6 5" fill="none" stroke="#1E2A44" stroke-width="2"/><g class="s1">
+<rect x="435.7" y="1" width="408.7" height="166" rx="18" fill="#0D1424" stroke="#1E2A44"/>
+<text x="460.7" y="50" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="30" font-weight="800" fill="#818CF8">02</text>
+<text x="510.7" y="47" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="18" font-weight="800" fill="#E6F4FF">Create a game</text>
+<rect x="456.7" y="70" width="366.7" height="40" rx="10" fill="#05070D" stroke="#1E2A44"/>
+<text x="468.7" y="95" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="12.5" fill="#E6F4FF"><tspan fill="#818CF8">$</tspan>&#160;victus new MyGame --template nocode</text>
+<text x="460.7" y="142" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" fill="#93A3C0">A finished level made from Behaviours.</text>
+</g><path d="M847.3 90h20" stroke="#1E2A44" stroke-width="2"/><path d="M861.3 85l6 5-6 5" fill="none" stroke="#1E2A44" stroke-width="2"/><g class="s2">
+<rect x="870.3" y="1" width="408.7" height="166" rx="18" fill="#0D1424" stroke="#1E2A44"/>
+<text x="895.3" y="50" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="30" font-weight="800" fill="#A855F7">03</text>
+<text x="945.3" y="47" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="18" font-weight="800" fill="#E6F4FF">Play and ship</text>
+<rect x="891.3" y="70" width="366.7" height="40" rx="10" fill="#05070D" stroke="#1E2A44"/>
+<text x="903.3" y="95" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="12.5" fill="#E6F4FF"><tspan fill="#A855F7">$</tspan>&#160;victus export MyGame --out MyGame-export</text>
+<text x="895.3" y="142" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" fill="#93A3C0">Signed .vpak packs and a standalone player.</text>
+</g>
+</svg>

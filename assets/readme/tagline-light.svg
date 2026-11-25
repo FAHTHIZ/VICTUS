@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="132" viewBox="0 0 1280 132" role="img" aria-labelledby="t d">
+<title id="t">Make a whole game, 2D or 3D, without writing code.</title>
+<desc id="d">Drop down to Luau, visual graphs or C++ whenever you want. One engine, one editor, from the first level to the exported build.</desc>
+<defs><linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#0891B2"/><stop offset=".55" stop-color="#4F46E5"/><stop offset="1" stop-color="#7E22CE"/></linearGradient></defs>
+<style>@media (prefers-reduced-motion: no-preference) {
+.l1{animation:up 1s .1s cubic-bezier(.2,.7,.1,1) both}.l2{animation:up 1s .45s cubic-bezier(.2,.7,.1,1) both}
+@keyframes up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+}</style>
+<text class="l1" x="640" y="58" text-anchor="middle" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="40" font-weight="800" fill="url(#g)" letter-spacing="-.01em">Make a whole game, 2D or 3D, without writing code.</text>
+<text class="l2" x="640" y="102" text-anchor="middle" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="19" font-weight="500" fill="#55627A">Drop down to Luau, visual graphs or C++ whenever you want. One engine, one editor, first level to shipped build.</text>
+</svg>

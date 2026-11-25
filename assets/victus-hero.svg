@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="620" viewBox="0 0 1320 620" role="img" aria-labelledby="title desc">
+<title id="title">VICTUS: the open engine for complete 2D and 3D games</title>
+<desc id="desc">An animated illustration of VICTUS Studio. Behaviours, Luau and visual graphs, and C++ feed one viewport that shows a 2D platformer beside a lit 3D scene, with the render graph running underneath.</desc>
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#05070D"/><stop offset=".55" stop-color="#0B1222"/><stop offset="1" stop-color="#140B24"/></linearGradient>
+<linearGradient id="word" x1="0" x2="1"><stop offset="0" stop-color="#E0F7FF"/><stop offset=".5" stop-color="#7DD3FC"/><stop offset="1" stop-color="#C4B5FD"/></linearGradient>
+<linearGradient id="accent" x1="0" x2="1"><stop offset="0" stop-color="#22D3EE"/><stop offset=".55" stop-color="#818CF8"/><stop offset="1" stop-color="#A855F7"/></linearGradient>
+<linearGradient id="sky2d" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1D2B57"/><stop offset="1" stop-color="#0F1730"/></linearGradient>
+<linearGradient id="sky3d" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2A1B4D"/><stop offset="1" stop-color="#0E1024"/></linearGradient>
+<linearGradient id="cubeTop" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#A5F3FC"/><stop offset="1" stop-color="#22D3EE"/></linearGradient>
+<linearGradient id="cubeL" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0E7490"/><stop offset="1" stop-color="#083344"/></linearGradient>
+<linearGradient id="cubeR" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#155E75"/><stop offset="1" stop-color="#0B3B4A"/></linearGradient>
+<radialGradient id="ball" cx=".35" cy=".3" r=".75"><stop offset="0" stop-color="#F5D0FE"/><stop offset=".35" stop-color="#A855F7"/><stop offset="1" stop-color="#3B0764"/></radialGradient>
+<radialGradient id="glowA" cx=".2" cy=".15" r=".6"><stop offset="0" stop-color="#22D3EE" stop-opacity=".28"/><stop offset="1" stop-color="#22D3EE" stop-opacity="0"/></radialGradient>
+<radialGradient id="glowB" cx=".85" cy=".95" r=".6"><stop offset="0" stop-color="#A855F7" stop-opacity=".3"/><stop offset="1" stop-color="#A855F7" stop-opacity="0"/></radialGradient>
+<pattern id="grid" width="34" height="34" patternUnits="userSpaceOnUse"><path d="M34 0H0V34" fill="none" stroke="#7DD3FC" stroke-opacity=".06"/></pattern>
+<clipPath id="vp"><rect x="662" y="196" width="590" height="270" rx="10"/></clipPath>
+</defs>
+<style>@media (prefers-reduced-motion: no-preference) {
+.flow{stroke-dasharray:6 8;animation:flow 1.6s linear infinite}@keyframes flow{to{stroke-dashoffset:-28}}
+.hero{animation:run 4s ease-in-out infinite}@keyframes run{0%,100%{transform:translateX(0)}50%{transform:translateX(150px)}}
+.jump{animation:jump 1s ease-in-out infinite}@keyframes jump{0%,100%{transform:translateY(0)}50%{transform:translateY(-34px)}}
+.coin{transform-box:fill-box;transform-origin:center;animation:spin 1.4s ease-in-out infinite}@keyframes spin{0%,100%{transform:scaleX(1)}50%{transform:scaleX(.2)}}
+.slime{transform-box:fill-box;transform-origin:bottom;animation:squish .9s ease-in-out infinite}@keyframes squish{0%,100%{transform:scale(1,1)}50%{transform:scale(1.12,.85)}}
+.orbit{animation:bob 2.6s ease-in-out infinite}@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-22px)}}
+.node rect{animation:pulse 2.1s ease-in-out infinite;animation-delay:inherit}@keyframes pulse{0%,100%{stroke-opacity:.45}50%{stroke-opacity:1}}
+.scan{animation:scan 5s linear infinite}@keyframes scan{from{transform:translateX(0)}to{transform:translateX(590px)}}
+.l1{animation:up 1s .1s cubic-bezier(.2,.7,.1,1) both}.l2{animation:up 1s .35s cubic-bezier(.2,.7,.1,1) both}.l3{animation:up 1s .6s cubic-bezier(.2,.7,.1,1) both}
+@keyframes up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+}</style>
+<rect width="1320" height="620" rx="30" fill="url(#bg)"/>
+<rect width="1320" height="620" rx="30" fill="url(#grid)"/>
+<rect width="1320" height="620" rx="30" fill="url(#glowA)"/>
+<rect width="1320" height="620" rx="30" fill="url(#glowB)"/>
+
+<g class="l1" transform="translate(68 70)">
+<path d="M0 0h16l14 34L44 0h16L38 52H22z" fill="url(#accent)"/>
+<text x="76" y="40" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="34" font-weight="900" fill="url(#word)" letter-spacing=".12em">VICTUS</text>
+</g>
+<g class="l2" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="800" letter-spacing="-.02em">
+<text x="68" y="214" font-size="46" fill="#F1F8FF">Make the whole game.</text>
+<text x="68" y="268" font-size="46" fill="url(#accent)">2D or 3D. No code</text>
+<text x="68" y="322" font-size="46" fill="url(#accent)">required.</text>
+</g>
+<g class="l3" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+<text x="68" y="374" font-size="18" font-weight="500" fill="#9FB0CC">An open C++20 engine with a full editor: PBR rendering,</text>
+<text x="68" y="400" font-size="18" font-weight="500" fill="#9FB0CC">Jolt and Box2D physics, AI, animation, audio, multiplayer</text>
+<text x="68" y="426" font-size="18" font-weight="500" fill="#9FB0CC">and one-command export.</text>
+<g font-size="13" font-weight="700">
+<rect x="68" y="462" width="126" height="34" rx="17" fill="#0D1424" stroke="#22D3EE" stroke-opacity=".6"/><text x="131" y="484" text-anchor="middle" fill="#22D3EE">Apache-2.0</text>
+<rect x="204" y="462" width="194" height="34" rx="17" fill="#0D1424" stroke="#818CF8" stroke-opacity=".6"/><text x="301" y="484" text-anchor="middle" fill="#C7D2FE">Vulkan · Metal · D3D12</text>
+<rect x="408" y="462" width="70" height="34" rx="17" fill="#0D1424" stroke="#A855F7" stroke-opacity=".6"/><text x="443" y="484" text-anchor="middle" fill="#E9D5FF">GLES</text>
+</g>
+<text x="68" y="540" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="14" fill="#6B7A99"><tspan fill="#22D3EE">$</tspan>&#160;victus new MyGame --template nocode</text>
+</g>
+
+<g>
+<rect x="640" y="100" width="634" height="460" rx="18" fill="#080C17" stroke="#1E2A44"/>
+<circle cx="664" cy="122" r="5" fill="#FB7185"/><circle cx="682" cy="122" r="5" fill="#F5B84A"/><circle cx="700" cy="122" r="5" fill="#34D399"/>
+<text x="957" y="127" text-anchor="middle" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#7B8BA8">VICTUS Studio · Play</text>
+<g transform="translate(1214 112)"><rect width="40" height="20" rx="6" fill="#0E3B2E"/><path d="M16 5l10 5-10 5z" fill="#34D399"/></g>
+<g clip-path="url(#vp)">
+<rect x="662" y="196" width="295" height="270" fill="url(#sky2d)"/>
+<rect x="957" y="196" width="295" height="270" fill="url(#sky3d)"/>
+<circle cx="910" cy="236" r="20" fill="#FDE68A" fill-opacity=".85"/>
+<rect x="662" y="412" width="295" height="60" fill="#1F3A2E"/><rect x="662" y="412" width="295" height="8" fill="#34D399" fill-opacity=".8"/>
+<rect x="706" y="332" width="110" height="14" rx="4" fill="#3F5E8C"/><rect x="866" y="306" width="70" height="14" rx="4" fill="#3F5E8C"/>
+<circle class="coin" style="animation-delay:0.00s" cx="730" cy="316" r="6" fill="#F5B84A"/><circle class="coin" style="animation-delay:0.25s" cx="760" cy="304" r="6" fill="#F5B84A"/><circle class="coin" style="animation-delay:0.50s" cx="790" cy="316" r="6" fill="#F5B84A"/><circle class="coin" style="animation-delay:0.75s" cx="900" cy="290" r="6" fill="#F5B84A"/>
+<g class="hero"><g class="jump"><rect x="684" y="378" width="24" height="34" rx="6" fill="#22D3EE"/><rect x="696" y="386" width="8" height="6" rx="2" fill="#05070D"/></g></g>
+<path class="slime" d="M884 412c0-16 10-24 22-24s22 8 22 24z" fill="#4ADE80"/><circle cx="899" cy="402" r="2.5" fill="#05070D"/><circle cx="913" cy="402" r="2.5" fill="#05070D"/>
+<path d="M1010 412L960 466" stroke="#7DD3FC" stroke-opacity=".14"/><path d="M1032 412L1004 466" stroke="#7DD3FC" stroke-opacity=".14"/><path d="M1054 412L1048 466" stroke="#7DD3FC" stroke-opacity=".14"/><path d="M1076 412L1092 466" stroke="#7DD3FC" stroke-opacity=".14"/><path d="M1098 412L1136 466" stroke="#7DD3FC" stroke-opacity=".14"/><path d="M1120 412L1180 466" stroke="#7DD3FC" stroke-opacity=".14"/><path d="M1142 412L1224 466" stroke="#7DD3FC" stroke-opacity=".14"/><path d="M1164 412L1268 466" stroke="#7DD3FC" stroke-opacity=".14"/><path d="M1186 412L1312 466" stroke="#7DD3FC" stroke-opacity=".14"/><path d="M1000 412H1220" stroke="#7DD3FC" stroke-opacity=".14"/><path d="M990 424H1230" stroke="#7DD3FC" stroke-opacity=".14"/><path d="M980 436H1240" stroke="#7DD3FC" stroke-opacity=".14"/><path d="M970 448H1250" stroke="#7DD3FC" stroke-opacity=".14"/><path d="M960 460H1260" stroke="#7DD3FC" stroke-opacity=".14"/>
+<g transform="translate(1040 286)"><path d="M0 40L50 15l50 25-50 25z" fill="url(#cubeTop)"/><path d="M0 40v60l50 25V65z" fill="url(#cubeL)"/><path d="M100 40v60l-50 25V65z" fill="url(#cubeR)"/></g>
+<ellipse cx="1090" cy="424" rx="62" ry="12" fill="#000" fill-opacity=".35"/>
+<g class="orbit"><circle cx="1196" cy="360" r="28" fill="url(#ball)"/></g>
+<ellipse cx="1196" cy="426" rx="26" ry="6" fill="#000" fill-opacity=".3"/>
+<rect class="scan" x="662" y="196" width="2" height="270" fill="#22D3EE" fill-opacity=".35"/>
+</g>
+<path d="M957 196v270" stroke="#05070D" stroke-width="2"/>
+<rect x="674" y="206" width="34" height="18" rx="5" fill="#05070D" fill-opacity=".6"/><text x="691" y="219" text-anchor="middle" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="800" fill="#22D3EE">2D</text>
+<rect x="969" y="206" width="34" height="18" rx="5" fill="#05070D" fill-opacity=".6"/><text x="986" y="219" text-anchor="middle" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="800" fill="#E9D5FF">3D</text>
+<text x="662" y="496" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#5E6E8C" letter-spacing=".08em">RENDER GRAPH</text>
+<g class="node" style="animation-delay:0.00s"><rect x="652" y="508" width="86" height="30" rx="9" fill="#0D1424" stroke="#22D3EE" stroke-opacity=".7"/><circle cx="666" cy="523" r="4" fill="#22D3EE"/><text x="676" y="527.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#C9D6EA">Depth</text></g><path d="M738 523h12" stroke="#33415E" stroke-width="2"/><g class="node" style="animation-delay:0.35s"><rect x="750" y="508" width="86" height="30" rx="9" fill="#0D1424" stroke="#7DD3FC" stroke-opacity=".7"/><circle cx="764" cy="523" r="4" fill="#7DD3FC"/><text x="774" y="527.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#C9D6EA">Shadows</text></g><path d="M836 523h12" stroke="#33415E" stroke-width="2"/><g class="node" style="animation-delay:0.70s"><rect x="848" y="508" width="86" height="30" rx="9" fill="#0D1424" stroke="#818CF8" stroke-opacity=".7"/><circle cx="862" cy="523" r="4" fill="#818CF8"/><text x="872" y="527.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#C9D6EA">Lighting</text></g><path d="M934 523h12" stroke="#33415E" stroke-width="2"/><g class="node" style="animation-delay:1.05s"><rect x="946" y="508" width="86" height="30" rx="9" fill="#0D1424" stroke="#A855F7" stroke-opacity=".7"/><circle cx="960" cy="523" r="4" fill="#A855F7"/><text x="970" y="527.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#C9D6EA">SSR</text></g><path d="M1032 523h12" stroke="#33415E" stroke-width="2"/><g class="node" style="animation-delay:1.40s"><rect x="1044" y="508" width="86" height="30" rx="9" fill="#0D1424" stroke="#FB7185" stroke-opacity=".7"/><circle cx="1058" cy="523" r="4" fill="#FB7185"/><text x="1068" y="527.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#C9D6EA">TAA</text></g><path d="M1130 523h12" stroke="#33415E" stroke-width="2"/><g class="node" style="animation-delay:1.75s"><rect x="1142" y="508" width="86" height="30" rx="9" fill="#0D1424" stroke="#F5B84A" stroke-opacity=".7"/><circle cx="1156" cy="523" r="4" fill="#F5B84A"/><text x="1166" y="527.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#C9D6EA">Tonemap</text></g>
+</g>
+<g><rect x="662" y="142" width="190" height="34" rx="10" fill="#0D1424" stroke="#22D3EE" stroke-opacity=".75"/><circle cx="678" cy="159" r="4.5" fill="#22D3EE"/><text x="690" y="163.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="800" fill="#E6F4FF">Behaviours<tspan font-size="11" font-weight="600" fill="#22D3EE" dx="8">no code</tspan></text></g><path class="flow" d="M757 176V196" fill="none" stroke="#22D3EE" stroke-width="2" stroke-opacity=".8"/><g><rect x="862" y="142" width="190" height="34" rx="10" fill="#0D1424" stroke="#818CF8" stroke-opacity=".75"/><circle cx="878" cy="159" r="4.5" fill="#818CF8"/><text x="890" y="163.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="800" fill="#E6F4FF">Luau + graphs<tspan font-size="11" font-weight="600" fill="#818CF8" dx="8">scripting</tspan></text></g><path class="flow" d="M957 176V196" fill="none" stroke="#818CF8" stroke-width="2" stroke-opacity=".8"/><g><rect x="1062" y="142" width="190" height="34" rx="10" fill="#0D1424" stroke="#A855F7" stroke-opacity=".75"/><circle cx="1078" cy="159" r="4.5" fill="#A855F7"/><text x="1090" y="163.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="800" fill="#E6F4FF">C++20<tspan font-size="11" font-weight="600" fill="#A855F7" dx="8">native</tspan></text></g><path class="flow" d="M1157 176V196" fill="none" stroke="#A855F7" stroke-width="2" stroke-opacity=".8"/>
+</svg>

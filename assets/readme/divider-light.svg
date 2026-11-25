@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="24" viewBox="0 0 1280 24" aria-hidden="true">
+<defs><linearGradient id="s" x1="0" x2="1"><stop offset="0" stop-color="#0891B2" stop-opacity="0"/><stop offset=".5" stop-color="#0891B2"/><stop offset="1" stop-color="#7E22CE" stop-opacity="0"/></linearGradient>
+<linearGradient id="v" x1="0" x2="1"><stop offset="0" stop-color="#0891B2"/><stop offset="1" stop-color="#7E22CE"/></linearGradient></defs>
+<style>@media (prefers-reduced-motion: no-preference) {
+.sweep{animation:sweep 6s ease-in-out infinite}@keyframes sweep{from{transform:translateX(-320px)}to{transform:translateX(1280px)}}
+}</style>
+<path d="M0 12H1280" stroke="#E3E9F3" stroke-width="1.5"/>
+<rect class="sweep" x="0" y="11" width="320" height="2" fill="url(#s)" transform="translate(-320 0)"/>
+<g transform="translate(628 0)"><rect width="24" height="24" rx="8" fill="#FFFFFF" stroke="#0891B2" stroke-opacity=".7"/><path d="M6 7h3l3 7 3-7h3l-4.5 10h-3z" fill="url(#v)"/></g>
+</svg>

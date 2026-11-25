@@ -35,6 +35,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Generated shader library matches sources
         run: python3 tools/shaders/compile_shaders.py --check
+      - name: README artwork matches the repository counts
+        run: python3 scripts/readme_assets.py --check
 
   character-pipeline:
     runs-on: ubuntu-latest

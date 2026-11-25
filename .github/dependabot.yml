@@ -1,0 +1,29 @@
+# Weekly workflow-action updates, grouped to keep the PR count low. C++ dependencies are pinned by hash in
+# cmake/VictusDependencies.cmake and updated deliberately with tools/deps/victus_deps.py (see CONTRIBUTING.md).
+# The cooldown holds new releases back for a few days so compromised versions are usually pulled first.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 5
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
+
+  - package-ecosystem: gradle
+    directory: /platforms/android
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 5
+      semver-major-days: 14
+    commit-message:
+      prefix: deps

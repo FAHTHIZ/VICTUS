@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="232" height="30" viewBox="0 0 232 30" role="img" aria-label="samples: 4 finished games">
+<title>samples: 4 finished games</title>
+<defs>
+<linearGradient id="samples-bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#111A2E"/><stop offset="1" stop-color="#05070D"/></linearGradient>
+<linearGradient id="samples-val" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F5B84A"/><stop offset="1" stop-color="#FCD34D"/></linearGradient>
+<linearGradient id="samples-edge" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F5B84A" stop-opacity=".6"/><stop offset=".5" stop-color="#F5B84A" stop-opacity=".15"/><stop offset="1" stop-color="#FCD34D" stop-opacity=".55"/></linearGradient>
+<linearGradient id="samples-shine" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".5" stop-color="#fff" stop-opacity=".22"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<clipPath id="samples-clip"><rect width="232" height="30" rx="15"/></clipPath>
+</defs>
+<style>@media (prefers-reduced-motion: no-preference) {
+.sw{animation:sw 9s 2s cubic-bezier(.4,0,.2,1) infinite}
+@keyframes sw{0%{transform:translateX(-80px)}20%,100%{transform:translateX(312px)}}
+}</style>
+<g clip-path="url(#samples-clip)">
+<rect width="232" height="30" fill="url(#samples-bg)"/>
+<rect x="99.9" y="3" width="129.1" height="24" rx="12" fill="url(#samples-val)"/>
+<rect class="sw" x="-60" y="0" width="46" height="30" fill="url(#samples-shine)" transform="translate(-80 0)"/>
+</g>
+<rect x=".5" y=".5" width="231" height="29" rx="14.5" fill="none" stroke="url(#samples-edge)"/>
+<g transform="translate(12 6) scale(.75)" fill="none" stroke="#F5B84A" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M6 11h4M8 9v4M15 12h.01M18 10h.01M17 4H7a5 5 0 0 0-5 5v4a5 5 0 0 0 9 3h2a5 5 0 0 0 9-3V9a5 5 0 0 0-5-5z"/></g>
+<text x="38" y="18.8" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="700" fill="#A9B7D0" letter-spacing=".04em">SAMPLES</text>
+<text x="164.4" y="19.4" text-anchor="middle" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#05070D">4 finished games</text>
+</svg>

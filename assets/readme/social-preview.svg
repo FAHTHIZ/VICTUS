@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#05070D"/><stop offset=".6" stop-color="#0B1222"/><stop offset="1" stop-color="#140B24"/></linearGradient>
+<linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#22D3EE"/><stop offset=".55" stop-color="#818CF8"/><stop offset="1" stop-color="#A855F7"/></linearGradient>
+<radialGradient id="halo"><stop offset="0" stop-color="#A855F7" stop-opacity=".25"/><stop offset="1" stop-color="#A855F7" stop-opacity="0"/></radialGradient>
+<linearGradient id="cubeTop" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#A5F3FC"/><stop offset="1" stop-color="#22D3EE"/></linearGradient>
+<pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#7DD3FC" stroke-opacity=".07"/></pattern>
+</defs>
+<rect width="1280" height="640" fill="url(#bg)"/><rect width="1280" height="640" fill="url(#grid)"/>
+<circle cx="1030" cy="320" r="330" fill="url(#halo)"/>
+<g transform="translate(80 84)"><path d="M0 0h18l16 38L50 0h18L44 58H24z" fill="url(#g)"/></g>
+<text x="170" y="132" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="46" font-weight="900" fill="#F5F8FF" letter-spacing=".12em">VICTUS</text>
+<text x="80" y="250" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="58" font-weight="800" fill="url(#g)" letter-spacing="-.02em">Make the whole game.</text>
+<text x="80" y="320" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="58" font-weight="800" fill="url(#g)" letter-spacing="-.02em">2D or 3D. No code required.</text>
+<text x="80" y="380" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="24" font-weight="500" fill="#A9B7D0">Open C++20 engine and editor: PBR rendering, Jolt and Box2D,</text>
+<text x="80" y="414" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="24" font-weight="500" fill="#A9B7D0">Luau and visual scripting, multiplayer and one-command export.</text>
+<g font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="800">
+<rect x="80" y="468" width="240" height="96" rx="18" fill="#0D1424" stroke="#1E2A44"/>
+<text x="104" y="516" font-size="38" fill="#22D3EE">1,242</text><text x="104" y="546" font-size="15" font-weight="600" fill="#93A3C0">automated test cases</text>
+<rect x="340" y="468" width="240" height="96" rx="18" fill="#0D1424" stroke="#1E2A44"/>
+<text x="364" y="516" font-size="38" fill="#818CF8">32</text><text x="364" y="546" font-size="15" font-weight="600" fill="#93A3C0">engine modules</text>
+<rect x="600" y="468" width="240" height="96" rx="18" fill="#0D1424" stroke="#1E2A44"/>
+<text x="624" y="516" font-size="38" fill="#A855F7">259</text><text x="624" y="546" font-size="15" font-weight="600" fill="#93A3C0">decision records</text>
+</g>
+<g transform="translate(960 220)"><path d="M0 60L80 20l80 40-80 40z" fill="url(#cubeTop)"/><path d="M0 60v100l80 40V100z" fill="#0E7490"/><path d="M160 60v100l-80 40V100z" fill="#155E75"/></g>
+<circle cx="1180" cy="200" r="42" fill="#A855F7" fill-opacity=".85"/>
+</svg>

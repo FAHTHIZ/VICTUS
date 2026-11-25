@@ -1,0 +1,79 @@
+name: Bug report
+description: Report a reproducible VICTUS engine, Studio, CLI or player problem
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: "Crash reports and diagnostics bundles can contain file paths and project names. Read docs/DIAGNOSTICS.md before attaching one."
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead?
+      description: Include the error text, `victus check` output or the Problems panel entry if there is one.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. victus new MyGame --template nocode\n2. Open it in Studio\n3. ..."
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Commit or version
+      description: "`victus version` prints it."
+      placeholder: "a commit SHA or a release tag"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of VICTUS?
+      multiple: true
+      options:
+        - Studio (editor)
+        - Rendering (3D)
+        - Rendering (2D)
+        - Behaviours (no-code)
+        - Luau scripting or visual graphs
+        - Physics
+        - Animation and characters
+        - AI and navigation
+        - Audio
+        - In-game UI
+        - Multiplayer
+        - Asset import
+        - Export and packaging
+        - Build and CI
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      multiple: true
+      options:
+        - Linux
+        - Windows
+        - macOS
+        - Android
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU, driver and graphics backend
+      placeholder: "NVIDIA RTX 3060, 560.35, Vulkan (or VICTUS_GPU_DRIVER=gles)"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The session log is in the user data folder; see docs/DIAGNOSTICS.md.
+      render: text

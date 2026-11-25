@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="162" height="30" viewBox="0 0 162 30" role="img" aria-label="docs: 30 guides">
+<title>docs: 30 guides</title>
+<defs>
+<linearGradient id="docs-bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#111A2E"/><stop offset="1" stop-color="#05070D"/></linearGradient>
+<linearGradient id="docs-val" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7DD3FC"/><stop offset="1" stop-color="#818CF8"/></linearGradient>
+<linearGradient id="docs-edge" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7DD3FC" stop-opacity=".6"/><stop offset=".5" stop-color="#7DD3FC" stop-opacity=".15"/><stop offset="1" stop-color="#818CF8" stop-opacity=".55"/></linearGradient>
+<linearGradient id="docs-shine" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".5" stop-color="#fff" stop-opacity=".22"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<clipPath id="docs-clip"><rect width="162" height="30" rx="15"/></clipPath>
+</defs>
+<style>@media (prefers-reduced-motion: no-preference) {
+.sw{animation:sw 9s 2s cubic-bezier(.4,0,.2,1) infinite}
+@keyframes sw{0%{transform:translateX(-80px)}20%,100%{transform:translateX(242px)}}
+}</style>
+<g clip-path="url(#docs-clip)">
+<rect width="162" height="30" fill="url(#docs-bg)"/>
+<rect x="76.0" y="3" width="83.0" height="24" rx="12" fill="url(#docs-val)"/>
+<rect class="sw" x="-60" y="0" width="46" height="30" fill="url(#docs-shine)" transform="translate(-80 0)"/>
+</g>
+<rect x=".5" y=".5" width="161" height="29" rx="14.5" fill="none" stroke="url(#docs-edge)"/>
+<g transform="translate(12 6) scale(.75)" fill="none" stroke="#7DD3FC" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2zM4 21V5M19 19v2H6"/></g>
+<text x="38" y="18.8" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="700" fill="#A9B7D0" letter-spacing=".04em">DOCS</text>
+<text x="117.5" y="19.4" text-anchor="middle" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#05070D">30 guides</text>
+</svg>

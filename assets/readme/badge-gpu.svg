@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="277" height="30" viewBox="0 0 277 30" role="img" aria-label="gpu: Vulkan · Metal · D3D12 · GLES">
+<title>gpu: Vulkan · Metal · D3D12 · GLES</title>
+<defs>
+<linearGradient id="gpu-bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#111A2E"/><stop offset="1" stop-color="#05070D"/></linearGradient>
+<linearGradient id="gpu-val" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#A855F7"/><stop offset="1" stop-color="#C084FC"/></linearGradient>
+<linearGradient id="gpu-edge" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#A855F7" stop-opacity=".6"/><stop offset=".5" stop-color="#A855F7" stop-opacity=".15"/><stop offset="1" stop-color="#C084FC" stop-opacity=".55"/></linearGradient>
+<linearGradient id="gpu-shine" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".5" stop-color="#fff" stop-opacity=".22"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<clipPath id="gpu-clip"><rect width="277" height="30" rx="15"/></clipPath>
+</defs>
+<style>@media (prefers-reduced-motion: no-preference) {
+.sw{animation:sw 9s 2s cubic-bezier(.4,0,.2,1) infinite}
+@keyframes sw{0%{transform:translateX(-80px)}20%,100%{transform:translateX(357px)}}
+}</style>
+<g clip-path="url(#gpu-clip)">
+<rect width="277" height="30" fill="url(#gpu-bg)"/>
+<rect x="69.3" y="3" width="204.7" height="24" rx="12" fill="url(#gpu-val)"/>
+<rect class="sw" x="-60" y="0" width="46" height="30" fill="url(#gpu-shine)" transform="translate(-80 0)"/>
+</g>
+<rect x=".5" y=".5" width="276" height="29" rx="14.5" fill="none" stroke="url(#gpu-edge)"/>
+<g transform="translate(12 6) scale(.75)" fill="none" stroke="#A855F7" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16v10H4zM8 7V4M12 7V4M16 7V4M8 20v-3M12 20v-3M16 20v-3M8 10h8v4H8z"/></g>
+<text x="38" y="18.8" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="700" fill="#A9B7D0" letter-spacing=".04em">GPU</text>
+<text x="171.6" y="19.4" text-anchor="middle" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#05070D">Vulkan · Metal · D3D12 · GLES</text>
+</svg>

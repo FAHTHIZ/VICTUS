@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="167" height="30" viewBox="0 0 167 30" role="img" aria-label="security: policy">
+<title>security: policy</title>
+<defs>
+<linearGradient id="security-bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#111A2E"/><stop offset="1" stop-color="#05070D"/></linearGradient>
+<linearGradient id="security-val" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#34D399"/><stop offset="1" stop-color="#22D3EE"/></linearGradient>
+<linearGradient id="security-edge" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#34D399" stop-opacity=".6"/><stop offset=".5" stop-color="#34D399" stop-opacity=".15"/><stop offset="1" stop-color="#22D3EE" stop-opacity=".55"/></linearGradient>
+<linearGradient id="security-shine" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".5" stop-color="#fff" stop-opacity=".22"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<clipPath id="security-clip"><rect width="167" height="30" rx="15"/></clipPath>
+</defs>
+<style>@media (prefers-reduced-motion: no-preference) {
+.sw{animation:sw 9s 2s cubic-bezier(.4,0,.2,1) infinite}
+@keyframes sw{0%{transform:translateX(-80px)}20%,100%{transform:translateX(247px)}}
+}</style>
+<g clip-path="url(#security-clip)">
+<rect width="167" height="30" fill="url(#security-bg)"/>
+<rect x="104.0" y="3" width="60.0" height="24" rx="12" fill="url(#security-val)"/>
+<rect class="sw" x="-60" y="0" width="46" height="30" fill="url(#security-shine)" transform="translate(-80 0)"/>
+</g>
+<rect x=".5" y=".5" width="166" height="29" rx="14.5" fill="none" stroke="url(#security-edge)"/>
+<g transform="translate(12 6) scale(.75)" fill="none" stroke="#34D399" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6zM9 12l2 2 4-4"/></g>
+<text x="38" y="18.8" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="700" fill="#A9B7D0" letter-spacing=".04em">SECURITY</text>
+<text x="134.0" y="19.4" text-anchor="middle" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#05070D">policy</text>
+</svg>

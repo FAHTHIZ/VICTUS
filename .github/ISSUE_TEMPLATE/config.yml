@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/FAHTHIZ/VICTUS/security/advisories/new
+    about: Report vulnerabilities privately. Please do not open a public issue for them.
+  - name: Read the getting started guide
+    url: https://github.com/FAHTHIZ/VICTUS/blob/main/docs/GETTING_STARTED.md
+    about: Toolchain setup, presets, Windows notes and troubleshooting.
+  - name: Check known limitations
+    url: https://github.com/FAHTHIZ/VICTUS/blob/main/docs/KNOWN_LIMITATIONS.md
+    about: Current subsystem maturity and concrete limits, before reporting a missing feature.

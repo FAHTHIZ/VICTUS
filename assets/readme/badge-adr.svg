@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="196" height="30" viewBox="0 0 196 30" role="img" aria-label="decisions: 259 ADRs">
+<title>decisions: 259 ADRs</title>
+<defs>
+<linearGradient id="adr-bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#111A2E"/><stop offset="1" stop-color="#05070D"/></linearGradient>
+<linearGradient id="adr-val" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#818CF8"/><stop offset="1" stop-color="#A855F7"/></linearGradient>
+<linearGradient id="adr-edge" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#818CF8" stop-opacity=".6"/><stop offset=".5" stop-color="#818CF8" stop-opacity=".15"/><stop offset="1" stop-color="#A855F7" stop-opacity=".55"/></linearGradient>
+<linearGradient id="adr-shine" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".5" stop-color="#fff" stop-opacity=".22"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<clipPath id="adr-clip"><rect width="196" height="30" rx="15"/></clipPath>
+</defs>
+<style>@media (prefers-reduced-motion: no-preference) {
+.sw{animation:sw 9s 2s cubic-bezier(.4,0,.2,1) infinite}
+@keyframes sw{0%{transform:translateX(-80px)}20%,100%{transform:translateX(276px)}}
+}</style>
+<g clip-path="url(#adr-clip)">
+<rect width="196" height="30" fill="url(#adr-bg)"/>
+<rect x="110.7" y="3" width="82.3" height="24" rx="12" fill="url(#adr-val)"/>
+<rect class="sw" x="-60" y="0" width="46" height="30" fill="url(#adr-shine)" transform="translate(-80 0)"/>
+</g>
+<rect x=".5" y=".5" width="195" height="29" rx="14.5" fill="none" stroke="url(#adr-edge)"/>
+<g transform="translate(12 6) scale(.75)" fill="none" stroke="#818CF8" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l4 4v14H6zM14 3v5h5M9 13h7M9 17h5"/></g>
+<text x="38" y="18.8" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="700" fill="#A9B7D0" letter-spacing=".04em">DECISIONS</text>
+<text x="151.8" y="19.4" text-anchor="middle" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#05070D">259 ADRs</text>
+</svg>

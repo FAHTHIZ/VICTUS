@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+title: "VICTUS"
+message: "If you use VICTUS in research or a write-up, please cite it as below."
+type: software
+authors:
+  - name: "Fahim Hussain"
+    alias: FAHTHIZ
+repository-code: "https://github.com/FAHTHIZ/VICTUS"
+abstract: >-
+  Independent, open-source C++20 game engine and editor for complete 2D and 3D games. VICTUS Studio
+  builds whole games from no-code Behaviours, Luau scripts, visual graphs or C++, on an engine with
+  physically based rendering over Vulkan, Metal, D3D12 and OpenGL ES, Jolt and Box2D physics,
+  navigation and behaviour-tree AI, skeletal animation, spatial audio, server-authoritative
+  multiplayer and one-command export.
+keywords:
+  - game-engine
+  - game-editor
+  - cpp20
+  - 2d
+  - 3d
+  - pbr-rendering
+  - luau
+  - no-code
+license: Apache-2.0

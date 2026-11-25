@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="185" height="30" viewBox="0 0 185 30" role="img" aria-label="tests: 1,242 cases">
+<title>tests: 1,242 cases</title>
+<defs>
+<linearGradient id="tests-bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#111A2E"/><stop offset="1" stop-color="#05070D"/></linearGradient>
+<linearGradient id="tests-val" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#34D399"/><stop offset="1" stop-color="#6EE7B7"/></linearGradient>
+<linearGradient id="tests-edge" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#34D399" stop-opacity=".6"/><stop offset=".5" stop-color="#34D399" stop-opacity=".15"/><stop offset="1" stop-color="#6EE7B7" stop-opacity=".55"/></linearGradient>
+<linearGradient id="tests-shine" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".5" stop-color="#fff" stop-opacity=".22"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<clipPath id="tests-clip"><rect width="185" height="30" rx="15"/></clipPath>
+</defs>
+<style>@media (prefers-reduced-motion: no-preference) {
+.sw{animation:sw 9s 2s cubic-bezier(.4,0,.2,1) infinite}
+@keyframes sw{0%{transform:translateX(-80px)}20%,100%{transform:translateX(265px)}}
+}</style>
+<g clip-path="url(#tests-clip)">
+<rect width="185" height="30" fill="url(#tests-bg)"/>
+<rect x="83.1" y="3" width="98.9" height="24" rx="12" fill="url(#tests-val)"/>
+<rect class="sw" x="-60" y="0" width="46" height="30" fill="url(#tests-shine)" transform="translate(-80 0)"/>
+</g>
+<rect x=".5" y=".5" width="184" height="29" rx="14.5" fill="none" stroke="url(#tests-edge)"/>
+<g transform="translate(12 6) scale(.75)" fill="none" stroke="#34D399" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6M10 3v6l-5.4 9.4A2 2 0 0 0 6.3 21h11.4a2 2 0 0 0 1.7-2.6L14 9V3M7.5 15h9"/></g>
+<text x="38" y="18.8" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="700" fill="#A9B7D0" letter-spacing=".04em">TESTS</text>
+<text x="132.6" y="19.4" text-anchor="middle" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#05070D">1,242 cases</text>
+</svg>

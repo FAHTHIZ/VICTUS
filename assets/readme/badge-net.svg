@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="292" height="30" viewBox="0 0 292 30" role="img" aria-label="multiplayer: server-authoritative">
+<title>multiplayer: server-authoritative</title>
+<defs>
+<linearGradient id="net-bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#111A2E"/><stop offset="1" stop-color="#05070D"/></linearGradient>
+<linearGradient id="net-val" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F5B84A"/><stop offset="1" stop-color="#FB7185"/></linearGradient>
+<linearGradient id="net-edge" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F5B84A" stop-opacity=".6"/><stop offset=".5" stop-color="#F5B84A" stop-opacity=".15"/><stop offset="1" stop-color="#FB7185" stop-opacity=".55"/></linearGradient>
+<linearGradient id="net-shine" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".5" stop-color="#fff" stop-opacity=".22"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<clipPath id="net-clip"><rect width="292" height="30" rx="15"/></clipPath>
+</defs>
+<style>@media (prefers-reduced-motion: no-preference) {
+.sw{animation:sw 9s 2s cubic-bezier(.4,0,.2,1) infinite}
+@keyframes sw{0%{transform:translateX(-80px)}20%,100%{transform:translateX(372px)}}
+}</style>
+<g clip-path="url(#net-clip)">
+<rect width="292" height="30" fill="url(#net-bg)"/>
+<rect x="128.2" y="3" width="160.8" height="24" rx="12" fill="url(#net-val)"/>
+<rect class="sw" x="-60" y="0" width="46" height="30" fill="url(#net-shine)" transform="translate(-80 0)"/>
+</g>
+<rect x=".5" y=".5" width="291" height="29" rx="14.5" fill="none" stroke="url(#net-edge)"/>
+<g transform="translate(12 6) scale(.75)" fill="none" stroke="#F5B84A" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></g>
+<text x="38" y="18.8" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="700" fill="#A9B7D0" letter-spacing=".04em">MULTIPLAYER</text>
+<text x="208.6" y="19.4" text-anchor="middle" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#05070D">server-authoritative</text>
+</svg>
